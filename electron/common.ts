@@ -40,7 +40,9 @@ export class GeneralSettings {
   updateCheck = true;
   customDictionary: string[] = [];
   hwAcceleration = true;
+  reducedMotion = false;
   risingCacheExpiryDays = 30;
+  horizonCacheMemoryCount = 350;
   risingSystemLogLevel: log.LevelOption = 'info';
   risingDisableWindowsHighContrast = false;
   browserPath = '';
@@ -51,6 +53,7 @@ export class GeneralSettings {
   horizonVanillaTextColors: boolean = false;
   horizonVanillaGenderColors: boolean = false;
   horizonBbcodeGlow: boolean = false;
+  horizonShowTips: boolean = true;
   soundTheme = 'default';
   soundThemeSoundVolumes: { [theme: string]: { [sound: string]: number } } = {};
   horizonAutoLogin: boolean = false;

@@ -62,6 +62,21 @@
                     </label>
                   </div>
                 </div>
+
+                <div class="mb-3">
+                  <div class="form-check">
+                    <input
+                      type="checkbox"
+                      id="showTips"
+                      v-model="settings.horizonShowTips"
+                      class="form-check-input"
+                    />
+                    <label class="form-check-label" for="showTips">
+                      {{ l('settings.showTips') }}
+                    </label>
+                  </div>
+                </div>
+
                 <h5>
                   {{ l('settings.spellcheck.language') }}
                 </h5>
@@ -611,10 +626,23 @@
                     </label>
                   </div>
                 </div>
-                <div v-else class="warning">
-                  <h5>{{ l('settings.comingsoon') }}</h5>
-                  <hr />
-                  <p>{{ l('settings.charactersToGeneral.generalInfo') }}</p>
+
+                <div class="mb-3">
+                  <div class="form-check">
+                    <input
+                      class="form-check-input"
+                      type="checkbox"
+                      id="reducedMotion"
+                      v-model="settings.reducedMotion"
+                    />
+                    <label class="form-check-label" for="reducedMotion">
+                      {{ l('settings.reducedMotion') }}
+                    </label>
+                  </div>
+
+                  <small class="form-text text-muted">{{
+                    l('settings.reducedMotion.description')
+                  }}</small>
                 </div>
               </div>
               <!-- Advanced -->
@@ -672,6 +700,50 @@
                       </select>
                     </div>
                   </label>
+                </div>
+
+                <h5>
+                  {{ l('settings.cache') }}
+                </h5>
+
+                <div class="mb-3">
+                  <label class="control-label" for="cacheExpiryDays">
+                    {{ l('settings.cache.expiryDays') }}</label
+                  >
+                  <div class="input-group">
+                    <input
+                      class="form-control"
+                      id="cacheExpiryDays"
+                      type="number"
+                      min="0"
+                      max="1000"
+                      v-model="settings.risingCacheExpiryDays"
+                    />
+                    <span class="input-group-text" id="basic-addon3">{{
+                      l('unit.days')
+                    }}</span>
+                  </div>
+                  <small class="form-text text-muted">{{
+                    l('settings.cache.expiryDays.description')
+                  }}</small>
+                </div>
+                <div class="mb-3">
+                  <label class="control-label" for="cacheMemoryCount">
+                    {{ l('settings.cache.memoryCount') }}
+                  </label>
+                  <div class="input-group">
+                    <input
+                      class="form-control"
+                      id="cacheMemoryCount"
+                      type="number"
+                      min="350"
+                      max="1000"
+                      v-model="settings.horizonCacheMemoryCount"
+                    />
+                  </div>
+                  <small class="form-text text-muted">{{
+                    l('settings.cache.memoryCount.description')
+                  }}</small>
                 </div>
 
                 <h5>
@@ -935,6 +1007,13 @@
           this.close();
         }
       });
+      if (process.platform === 'darwin') {
+        window.addEventListener('keydown', e => {
+          if (e.metaKey && e.key == 'w') {
+            this.close();
+          }
+        });
+      }
     }
 
     minimize(): void {

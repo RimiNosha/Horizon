@@ -11,6 +11,7 @@ class Character implements Interfaces.Character {
   statusText = '';
   isFriend = false;
   isBookmarked = false;
+  isCharacterFriend = false;
   isChatOp = false;
   isIgnored = false;
   overrides: CharacterOverrides = {};
@@ -25,9 +26,25 @@ class Character implements Interfaces.Character {
 
 export interface CharacterOverrides {
   avatarUrl?: string;
-  characterColor?: string;
+  characterColor?: CharacterColor;
   gender?: Interfaces.Gender;
   status?: Interfaces.Status;
+}
+
+export enum CharacterColor {
+  red,
+  orange,
+  yellow,
+  green,
+  cyan,
+  purple,
+  blue,
+  pink,
+  black,
+  brown,
+  white,
+  gray,
+  none
 }
 
 class State implements Interfaces.State {
@@ -37,10 +54,12 @@ class State implements Interfaces.State {
   ownProfile: CharacterProfile = <any>undefined; /*tslint:disable-line:no-any*/ //hack
 
   friends: Character[] = [];
+  characterFriends: Character[] = [];
   bookmarks: Character[] = [];
   ignoreList: string[] = [];
   opList: string[] = [];
   friendList: string[] = [];
+  characterFriendList: string[] = [];
   bookmarkList: string[] = [];
 
   get(name: string): Character {
@@ -65,11 +84,22 @@ class State implements Interfaces.State {
     if (character.status === 'offline' && status !== 'offline') {
       if (character.isFriend) this.friends.push(character);
       if (character.isBookmarked) this.bookmarks.push(character);
+      if (this.characterFriendList.indexOf(character.name) !== -1) {
+        if (this.characterFriends.indexOf(character) === -1) {
+          this.characterFriends.push(character);
+        }
+      }
     } else if (status === 'offline' && character.status !== 'offline') {
       if (character.isFriend)
         this.friends.splice(this.friends.indexOf(character), 1);
       if (character.isBookmarked)
         this.bookmarks.splice(this.bookmarks.indexOf(character), 1);
+      if (this.characterFriendList.indexOf(character.name) !== -1) {
+        const index = this.characterFriends.indexOf(character);
+        if (index !== -1) {
+          this.characterFriends.splice(index, 1);
+        }
+      }
     }
     character.status = status;
     character.statusText = decodeHTML(text);
@@ -86,12 +116,37 @@ class State implements Interfaces.State {
     type: 'status',
     value: Interfaces.Status | undefined
   ): void;
+  setOverride(
+    name: string,
+    type: 'characterColor',
+    value: string | undefined | null
+  ): void;
   setOverride(name: string, type: keyof CharacterOverrides, value: any): void {
     const char = this.get(name);
+    let newValue: any;
 
-    Vue.set(char.overrides, type, value);
+    if (type === 'characterColor') {
+      if (value === 'none' || value === undefined || value === null) {
+        newValue = CharacterColor.none;
+      } else {
+        // This will work well, provided the bbcode colors never get expanded.
+        // Funny joke. we all know they won't.
+        const colorKey = value.toLowerCase() as keyof typeof CharacterColor;
+        newValue =
+          CharacterColor[colorKey] !== undefined
+            ? CharacterColor[colorKey]
+            : CharacterColor.none;
+      }
+    } else {
+      newValue = value;
+    }
+
+    if (char.overrides[type] === newValue) {
+      return;
+    }
+
+    Vue.set(char.overrides, type, newValue);
   }
-
   async resolveOwnProfile(): Promise<void> {
     await methods.fieldsGet();
 
@@ -111,14 +166,15 @@ export default function (this: void, connection: Connection): Interfaces.State {
   connection.onEvent('connecting', async isReconnect => {
     state.friends = [];
     state.bookmarks = [];
+    state.characterFriends = [];
     state.bookmarkList = (
       await connection.queryApi<{ characters: string[] }>('bookmark-list.php')
     ).characters;
-    state.friendList = (
-      await connection.queryApi<{
-        friends: { source: string; dest: string; last_online: number }[];
-      }>('friend-list.php')
-    ).friends.map(x => x.dest);
+    const friendResponse = await connection.queryApi<{
+      friends: { source: string; dest: string; last_online: number }[];
+    }>('friend-list.php');
+    state.friendList = friendResponse.friends.map(x => x.dest);
+    state.characterFriendList = [];
     if (isReconnect && <Character | undefined>state.ownCharacter !== undefined)
       reconnectStatus = {
         status: state.ownCharacter.status,
@@ -181,6 +237,24 @@ export default function (this: void, connection: Connection): Interfaces.State {
     if (data.identity === connection.character) {
       state.ownCharacter = character;
 
+      const friendResponse = await connection.queryApi<{
+        friends: { source: string; dest: string; last_online: number }[];
+      }>('friend-list.php');
+      state.characterFriendList = friendResponse.friends
+        .filter(x => x.source === state.ownCharacter.name)
+        .map(x => x.dest);
+      for (const key in state.characters) {
+        const existing = state.characters[key]!;
+        if (
+          existing.status !== 'offline' &&
+          state.characterFriendList.indexOf(existing.name) !== -1 &&
+          state.characterFriends.indexOf(existing) === -1
+        ) {
+          state.characterFriends.push(existing);
+          existing.isCharacterFriend = true;
+        }
+      }
+
       await state.resolveOwnProfile();
 
       // tslint:disable-next-line no-unnecessary-type-assertion
@@ -209,7 +283,8 @@ export default function (this: void, connection: Connection): Interfaces.State {
     const char = state.get(data.character);
     char.isChatOp = false;
   });
-  connection.onMessage('RTB', data => {
+  connection.onMessage('RTB', async data => {
+    console.log('got rtb:', data);
     if (
       data.type !== 'trackadd' &&
       data.type !== 'trackrem' &&
@@ -218,6 +293,7 @@ export default function (this: void, connection: Connection): Interfaces.State {
     )
       return;
     const character = state.get(data.name);
+    const ownName = (state.ownCharacter as Character | undefined)?.name;
     switch (data.type) {
       case 'trackadd':
         state.bookmarkList.push(data.name);
@@ -231,16 +307,63 @@ export default function (this: void, connection: Connection): Interfaces.State {
           state.bookmarks.splice(state.bookmarks.indexOf(character), 1);
         break;
       case 'friendadd':
-        if (character.isFriend) return;
+        // Always add to global friends
         state.friendList.push(data.name);
         character.isFriend = true;
         if (character.status !== 'offline') state.friends.push(character);
+
+        // Always update character-specific friends list. This shouldn't add any excessive overhead.
+        const friendAddResponse = await connection.queryApi<{
+          friends: { source: string; dest: string; last_online: number }[];
+        }>('friend-list.php');
+        state.characterFriendList = ownName
+          ? friendAddResponse.friends
+              .filter(x => x.source === ownName)
+              .map(x => x.dest)
+          : [];
+
+        // If this character is now a friend of our character and is online, add to characterFriends.
+        // TODO: We may want to alter this in the future for the 'all' list. For now, it's fine.
+        if (
+          ownName &&
+          state.characterFriendList.indexOf(character.name) !== -1 &&
+          character.status !== 'offline' &&
+          state.characterFriends.indexOf(character) === -1
+        ) {
+          state.characterFriends.push(character);
+          character.isCharacterFriend = true;
+        }
         break;
       case 'friendremove':
+        // Always remove from global friends
         state.friendList.splice(state.friendList.indexOf(data.name), 1);
         character.isFriend = false;
-        if (character.status !== 'offline')
+        if (character.status !== 'offline') {
           state.friends.splice(state.friends.indexOf(character), 1);
+        }
+
+        // Once again, update character-specific friends list, regardless of setting
+        const friendRemoveResponse = await connection.queryApi<{
+          friends: { source: string; dest: string; last_online: number }[];
+        }>('friend-list.php');
+        state.characterFriendList = ownName
+          ? friendRemoveResponse.friends
+              .filter(x => x.source === ownName)
+              .map(x => x.dest)
+          : [];
+
+        // If this character is no longer a friend of our character, remove from characterFriends
+        if (
+          ownName &&
+          state.characterFriendList.indexOf(character.name) === -1 &&
+          character.status !== 'offline'
+        ) {
+          const index = state.characterFriends.indexOf(character);
+          if (index !== -1) {
+            state.characterFriends.splice(index, 1);
+            character.isCharacterFriend = false;
+          }
+        }
     }
   });
   return state;

@@ -12,7 +12,6 @@
       <character-action-menu
         :character="character"
         @rename="showRename()"
-        @delete="showDelete()"
         @block="showBlock()"
       ></character-action-menu>
 
@@ -28,7 +27,6 @@
             ><i class="fa fa-fw fa-pencil-alt"></i
           ></a>
           <button
-            @click="showDelete"
             :title="l('userProfile.delete')"
             class="delete-link btn btn-outline-danger col-3"
             disabled
@@ -36,7 +34,6 @@
             <i class="fa fa-fw fa-trash"></i>
           </button>
           <button
-            @click="showDuplicate()"
             :title="l('userProfile.duplicate')"
             class="duplicate-link btn btn-outline-secondary col-3"
             disabled
@@ -153,11 +150,6 @@
           ></infotag-item>
         </template>
 
-        <!--            <div class="contact-block">-->
-        <!--                <contact-method v-for="method in contactMethods" :infotag="method" :key="method.id"-->
-        <!--                    :data="character.character.infotags[method.id]"></contact-method>-->
-        <!--            </div>-->
-
         <div class="quick-info">
           <span class="quick-info-label">{{ l('userProfile.created') }}</span>
           <span class="quick-info-value"
@@ -221,12 +213,7 @@
         ref="memo-dialog"
         @memo="memo"
       ></memo-dialog>
-      <delete-dialog :character="character" ref="delete-dialog"></delete-dialog>
       <rename-dialog :character="character" ref="rename-dialog"></rename-dialog>
-      <duplicate-dialog
-        :character="character"
-        ref="duplicate-dialog"
-      ></duplicate-dialog>
       <report-dialog
         v-if="!oldApi && authenticated && !character.is_self"
         :character="character"
@@ -250,10 +237,7 @@
   import DateDisplay from '../../components/date_display.vue';
   import { Infotag } from '../../interfaces';
   import * as Utils from '../utils';
-  import ContactMethodView from './contact_method.vue';
   import { methods, registeredComponents, Store } from './data_store';
-  import DeleteDialog from './delete_dialog.vue';
-  import DuplicateDialog from './duplicate_dialog.vue';
   import FriendDialog from './friend_dialog.vue';
   import InfotagView from './infotag.vue';
   import { Character, CONTACT_GROUP_ID, SharedStore } from './interfaces';
@@ -261,6 +245,7 @@
   import MemoDialog from './memo_dialog.vue';
   import ReportDialog from './report_dialog.vue';
   import core from '../../chat/core';
+  import { getContributorAlias } from '../../chat/profile_api';
 
   interface ShowableVueDialog extends Vue {
     show(): void;
@@ -290,10 +275,7 @@
 
   @Component({
     components: {
-      'contact-method': ContactMethodView,
       date: DateDisplay,
-      'delete-dialog': DeleteDialog,
-      'duplicate-dialog': DuplicateDialog,
       'friend-dialog': FriendDialog,
       'infotag-item': InfotagView,
       'memo-dialog': MemoDialog,
@@ -331,9 +313,9 @@
       if (!this.character.badges) return [];
       if (core.state.settings?.horizonShowDeveloperBadges)
         return this.character.badges;
-      // Filter out maintainer & developer badges if user disabled them.
+      // Filter out maintainer, developer, & contributor badges if user disabled them.
       return this.character.badges.filter(
-        b => b !== 'maintainer' && b !== 'developer'
+        b => b !== 'maintainer' && b !== 'developer' && b !== 'contributor'
       );
     }
 
@@ -350,12 +332,17 @@
         helpdesk: 'fa fa-user',
         developer: 'fa fa-terminal',
         maintainer: 'fa fa-wrench',
+        contributor: 'fa fa-code',
         'subscription.lifetime': 'fa fa-certificate'
       };
       return badgeName in classMap ? classMap[badgeName] : '';
     }
 
     badgeTitle(badgeName: string): string {
+      if (badgeName === 'contributor') {
+        const alias = getContributorAlias(this.character.character.name);
+        return alias ? `Horizon Contributor "${alias}"` : 'Horizon Contributor';
+      }
       const badgeMap: { [key: string]: string } = {
         admin: 'Administrator',
         global: 'Global Moderator',
@@ -376,14 +363,6 @@
 
     showRename(): void {
       (<ShowableVueDialog>this.$refs['rename-dialog']).show();
-    }
-
-    showDelete(): void {
-      (<ShowableVueDialog>this.$refs['delete-dialog']).show();
-    }
-
-    showDuplicate(): void {
-      (<ShowableVueDialog>this.$refs['duplicate-dialog']).show();
     }
 
     showMemo(): void {

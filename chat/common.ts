@@ -1,10 +1,26 @@
 import { isToday, format } from 'date-fns';
 import { Keys } from '../keys';
-import { Character, Conversation, Settings as ISettings } from './interfaces';
+import {
+  AvailableSort,
+  Character,
+  Conversation,
+  Settings as ISettings
+} from './interfaces';
 import core from './core';
 
 export function profileLink(this: any | never, character: string): string {
   return `https://www.f-list.net/c/${character}`;
+}
+
+/**
+ * A fast randomization algorithm.
+ * @param arr An array to be randomized; will be modified in-place
+ */
+export async function FisherYatesShuffle(arr: any[]): Promise<void> {
+  for (let cp = arr.length - 1; cp > 0; cp--) {
+    const np = Math.floor(Math.random() * (cp + 1));
+    [arr[cp], arr[np]] = [arr[np], arr[cp]];
+  }
 }
 
 export function characterImage(
@@ -65,6 +81,8 @@ export class Settings implements ISettings {
   showNeedsReply = false;
   enterSend = true;
   colorBookmarks = false;
+  showPerCharacterFriends = true;
+  hideNonCharacterFriends = false;
   bbCodeBar = true;
 
   risingAdScore = true;
@@ -85,6 +103,10 @@ export class Settings implements ISettings {
   horizonShowCustomCharacterColors = true;
   horizonShowDeveloperBadges = true;
   horizonShowGenderMarker = false;
+  horizonAutoGenderFilter = false;
+  horizonSavedGenderFilters: string[] = [];
+  horizonSavedMembersSort: AvailableSort = 'status';
+  horizonPersistentMemberFilters = false;
   horizonGenderMarkerOrigColor = false;
   horizonVanillaGenderColors = false;
   horizonChangeOfflineColor = false;
@@ -172,6 +194,7 @@ export class ConversationSettings implements Conversation.Settings {
   };
   horizonHighlightUsers: string[] = [];
   logMessages = Conversation.Setting.Default;
+  muted = false;
 }
 
 export function formatTime(
