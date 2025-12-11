@@ -616,28 +616,29 @@ export class Matcher {
   }
 
   private resolveFurryPairingsScore(): Score {
-    const you = this.you;
-    const theyAreAnthro = this.theirAnalysis.isAnthro;
-    const theyAreHuman = this.theirAnalysis.isHuman;
-
-    const score = theyAreAnthro
-      ? Matcher.furryLikeabilityScore(you)
-      : theyAreHuman
-        ? Matcher.humanLikeabilityScore(you)
-        : Scoring.NEUTRAL;
-
-    if (score === Scoring.WEAK_MATCH)
-      return new Score(
-        score,
-        theyAreAnthro
-          ? 'Prefers <span>humans</span>, ok with anthros'
-          : 'Prefers <span>anthros</span>, ok with humans'
-      );
-
-    return this.formatScoring(
-      score,
-      theyAreAnthro ? 'furry pairings' : theyAreHuman ? 'human pairings' : ''
-    );
+    //    const you = this.you;
+    //    const theyAreAnthro = this.theirAnalysis.isAnthro;
+    //    const theyAreHuman = this.theirAnalysis.isHuman;
+    //
+    //    const score = theyAreAnthro
+    //      ? Matcher.furryLikeabilityScore(you)
+    //      : theyAreHuman
+    //        ? Matcher.humanLikeabilityScore(you)
+    //        : Scoring.NEUTRAL;
+    //
+    //    if (score === Scoring.WEAK_MATCH)
+    //      return new Score(
+    //        score,
+    //        theyAreAnthro
+    //          ? 'Prefers <span>humans</span>, ok with anthros'
+    //          : 'Prefers <span>anthros</span>, ok with humans'
+    //      );
+    //
+    //    return this.formatScoring(
+    //      score,
+    //      theyAreAnthro ? 'furry pairings' : theyAreHuman ? 'human pairings' : ''
+    //    );
+    return this.formatScoring(Scoring.WEAK_MATCH, 'species resolution sucks');
   }
 
   private resolveKinkScore(pronoun: string): Score {
@@ -1343,33 +1344,15 @@ export class Matcher {
   }
 
   static isMammal(c: Character): boolean | null {
-    const species = Matcher.species(c);
-
-    if (species === null) return null;
-
-    return mammalSpecies.indexOf(species) >= 0;
+    return false;
   }
 
   static isAnthro(c: Character): boolean | null {
-    const bodyTypeId = Matcher.getTagValueList(TagId.BodyType, c);
-
-    if (bodyTypeId === BodyType.Anthro) return true;
-
-    const speciesId = Matcher.species(c);
-
-    if (!speciesId) return null;
-
-    return nonAnthroSpecies.indexOf(speciesId) < 0;
+    return false;
   }
 
   static isHuman(c: Character): boolean | null {
-    const bodyTypeId = Matcher.getTagValueList(TagId.BodyType, c);
-
-    if (bodyTypeId === BodyType.Human) return true;
-
-    const speciesId = Matcher.species(c);
-
-    return speciesId === Species.Human;
+    return true;
   }
 
   static species(c: Character): Species | null {
