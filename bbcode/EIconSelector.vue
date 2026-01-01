@@ -138,10 +138,15 @@
         </div>
 
         <div class="carousel slide w-100 results">
-          <div class="carousel-inner w-100 hidden-scrollbar" role="listbox">
+          <div
+            class="carousel-inner w-100 hidden-scrollbar"
+            role="listbox"
+            ref="resultsContainer"
+          >
             <div
               class="carousel-item"
               v-for="eicon in results"
+              :key="eicon"
               role="img"
               :aria-label="eicon"
               tabindex="0"
@@ -181,7 +186,7 @@
 
 <script lang="ts">
   import { Component, Hook, Prop } from '@f-list/vue-ts';
-  // import Vue from 'vue';
+  import Sortable from 'sortablejs';
   import { EIconStore } from '../learn/eicon/store';
   import core from '../chat/core';
   import modal from '../components/Modal.vue';
@@ -212,15 +217,41 @@
     @Prop
     readonly onSelect?: (eicon: string, shift: boolean) => void;
 
+    private sortable: Sortable | undefined = undefined;
+
     storeLoaded: boolean = false;
 
     results: string[] = [];
+
+    allResults: string[] = []; // store all search results
+
+    displayedCount: number = 77; // 77 results is about 1.5 pages
+
+    loadIncrement: number = 77; // initial load count and additional loading increment
+
+    readonly random_max = 2000; // maximum random results to fetch. do you *really* need more than this, you degenerate?
 
     search: string = '';
 
     refreshing = false;
 
+    isLoadingMore = false;
+
     searchUpdateDebounce = debounce(() => this.runSearch(), 350);
+
+    handleScroll = debounce(() => {
+      const resultsContainer = this.$refs['resultsContainer'] as HTMLElement;
+      if (!resultsContainer || this.isLoadingMore) return; // checks if it's already loading to avoid too many calls to load
+
+      const scrollTop = resultsContainer.scrollTop;
+      const scrollHeight = resultsContainer.scrollHeight;
+      const clientHeight = resultsContainer.clientHeight;
+
+      // load more when user scrolls to within 200px of the bottom
+      if (scrollTop + clientHeight >= scrollHeight - 200) {
+        this.loadMoreResults();
+      }
+    }, 100);
 
     @Hook('mounted')
     async mounted(): Promise<void> {
@@ -231,6 +262,85 @@
         this.forceAddFavorite(data.eicon);
       });
       this.searchWithString('category:favorites');
+
+      // add scroll listener to the results container
+      this.$nextTick(() => {
+        const resultsContainer = this.$refs['resultsContainer'] as HTMLElement;
+        if (resultsContainer) {
+          resultsContainer.addEventListener('scroll', this.handleScroll);
+        }
+        this.initializeSortable();
+      });
+    }
+
+    @Hook('beforeDestroy')
+    beforeDestroy(): void {
+      const resultsContainer = this.$refs['resultsContainer'] as HTMLElement;
+      if (resultsContainer) {
+        resultsContainer.removeEventListener('scroll', this.handleScroll);
+      }
+      this.destroySortable();
+    }
+
+    initializeSortable(): void {
+      if (this.sortable || this.search !== 'category:favorites') return;
+
+      const resultsContainer = this.$refs['resultsContainer'] as HTMLElement;
+      if (!resultsContainer) return;
+
+      this.sortable = Sortable.create(resultsContainer, {
+        animation: 150,
+        onEnd: e => {
+          //const itemEl = e.item;
+          const oldIndex = e.oldIndex!;
+          const newIndex = e.newIndex!;
+
+          const eicon = this.results[oldIndex];
+
+          this.results.splice(oldIndex, 1);
+          this.results.splice(newIndex, 0, eicon);
+
+          const favoriteEIcons = Object.keys(core.state.favoriteEIcons);
+          favoriteEIcons.splice(oldIndex, 1);
+          favoriteEIcons.splice(newIndex, 0, eicon);
+
+          const newFavorites: Record<string, boolean> = {};
+          for (const eicon of favoriteEIcons) {
+            newFavorites[eicon] = true;
+          }
+          core.state.favoriteEIcons = newFavorites;
+
+          void core.settingsStore.set(
+            'favoriteEIcons',
+            core.state.favoriteEIcons
+          );
+        }
+      });
+    }
+
+    destroySortable(): void {
+      if (this.sortable) {
+        this.sortable.destroy();
+        this.sortable = undefined;
+      }
+    }
+
+    loadMoreResults(): void {
+      if (this.displayedCount >= this.allResults.length) return;
+
+      this.isLoadingMore = true;
+
+      const newCount = Math.min(
+        this.displayedCount + this.loadIncrement,
+        this.allResults.length
+      );
+
+      this.displayedCount = newCount;
+      this.results = this.allResults.slice(0, this.displayedCount);
+
+      this.$nextTick(() => {
+        this.isLoadingMore = false;
+      });
     }
 
     searchWithString(s: string) {
@@ -244,19 +354,35 @@
       if (bbcodeMatch) {
         s = bbcodeMatch[1].trim();
       }
+
+      // reset pagination
+      this.displayedCount = this.loadIncrement;
+
       if (s.startsWith('category:')) {
         const category = s.substring(9).trim();
 
         if (category === 'random') {
-          this.results = store?.nextPage() || [];
+          this.allResults = [...(store?.nextPage(this.random_max) || [])];
         } else {
-          this.results = this.getCategoryResults(category);
+          this.allResults = this.getCategoryResults(category);
         }
       } else if (s.length === 0) {
-        this.results = store?.nextPage() || [];
+        this.allResults = [...(store?.nextPage(this.random_max) || [])];
       } else {
-        this.results = store?.search(s).slice(0, 301) || [];
+        this.allResults = store?.search(s) || [];
       }
+
+      this.results = this.allResults.slice(0, this.displayedCount);
+
+      this.$nextTick(() => {
+        // returns user to top after changing search
+        const resultsContainer = this.$refs['resultsContainer'] as HTMLElement;
+        if (resultsContainer) {
+          resultsContainer.scrollTop = 0;
+        }
+
+        this.initializeSortable();
+      });
     }
 
     getCategoryResults(category: string): string[] {
@@ -659,6 +785,19 @@
       this.runSearch();
 
       this.refreshing = false;
+
+      this.$nextTick(() => {
+        const resultsContainer = this.$refs['resultsContainer'] as HTMLElement;
+        if (resultsContainer) {
+          resultsContainer.addEventListener('scroll', this.handleScroll);
+        }
+
+        this.destroySortable();
+
+        if (this.search === 'category:favorites') {
+          this.initializeSortable();
+        }
+      });
     }
 
     setFocus(): void {
@@ -744,6 +883,7 @@
             border-top-left-radius: 0;
             border-bottom-left-radius: 0;
           }
+
           .expressions {
             border-top-left-radius: 0;
             border-top-right-radius: 0;
@@ -779,13 +919,13 @@
             display: table-cell;
             border: solid 1px transparent !important;
             position: relative;
-
             &:hover {
-              background-color: var(--bs-light) !important;
-              border: solid 1px var(--bs-light) !important;
-
+              &:not(:active) {
+                background-color: var(--bs-light) !important;
+                border: solid 1px var(--bs-light) !important;
+              }
               .favorite-toggle {
-                visibility: visible !important;
+                visibility: visible;
               }
             }
 

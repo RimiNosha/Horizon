@@ -91,10 +91,19 @@
                 v-model="settings.host"
                 @keypress.enter="login()"
                 :disabled="loggingIn"
+                @change="hostChanged = true"
+                @input="hostChanged = true"
               />
               <button class="btn btn-outline-secondary" @click="resetHost()">
                 <span class="fas fa-undo-alt"></span>
               </button>
+            </div>
+            <div
+              id="host-warn"
+              class="form-text text-danger-emphasis"
+              v-if="hostChanged"
+            >
+              {{ l('login.host.presumedIncorrect') }}
             </div>
             <div style="height: 8px"></div>
             <label class="control-label" for="proxy">{{
@@ -408,6 +417,7 @@
     saveLogin = false;
     autoLogin = false;
     loggingIn = false;
+    hostChanged = false;
     password = '';
     character?: string;
     characters?: SimpleCharacter[];
@@ -760,6 +770,7 @@
 
     resetHost(): void {
       this.settings.host = defaultHost;
+      this.hostChanged = false;
     }
 
     resetProxy(): void {

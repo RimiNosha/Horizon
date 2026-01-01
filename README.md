@@ -246,8 +246,8 @@ Our codebase has received contributions from the following people:
 <!--Sort contributors alphabetically if you add more, please 🐟.-->
 
 - **French**: Azthenor, Fragile, Xav
-- **German**: ForgetfulTragedy, Peel
+- **German**: Froggy, Peel
 - **Hungarian**: Firespark
 - **Italian**: Clovermoth
-- **Spanish**: A Day with a Carrot, Dess
+- **Spanish**: A Day with a Carrot, Dess, DannyIW
 - **UWUnglish** (we're so sorry): @CodingWithAnxiety, @FatCatClient
