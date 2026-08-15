@@ -4,7 +4,7 @@ import { Connection } from '../fchat';
 import { Channel, Character } from '../fchat/interfaces';
 import { AdManager } from './ads/ad-manager';
 import { SmartFilterSettings } from '../learn/filter/types';
-export { Connection, Channel, Character } from '../fchat/interfaces';
+export { type Connection, Channel, type Character } from '../fchat/interfaces';
 export const userStatuses: ReadonlyArray<Character.Status> = [
   'online',
   'looking',
@@ -109,6 +109,14 @@ export namespace Conversation {
     return (<Partial<ChannelConversation>>conversation).channel !== undefined;
   }
 
+  export interface ChannelGroup {
+    id: string;
+    name: string;
+    collapsed: boolean;
+    order: number;
+    channels: string[];
+  }
+
   export interface State {
     readonly privateConversations: ReadonlyArray<PrivateConversation>;
     readonly channelConversations: ReadonlyArray<ChannelConversation>;
@@ -116,7 +124,7 @@ export namespace Conversation {
     readonly recent: ReadonlyArray<RecentPrivateConversation>;
     readonly recentChannels: ReadonlyArray<RecentChannelConversation>;
     readonly selectedConversation: Conversation;
-    readonly hasNew: boolean;
+    readonly hasNew: number;
     readonly lastConversation: Conversation;
     byKey(key: string): Conversation | undefined;
     navigateForward(): boolean;
@@ -128,6 +136,14 @@ export namespace Conversation {
       character: Character,
       noCreate: boolean
     ): PrivateConversation | undefined;
+
+    channelGroups: ChannelGroup[];
+    channelGroupAssignments: { [channelId: string]: string };
+    createChannelGroup(name: string): string;
+    deleteChannelGroup(id: string): void;
+    renameChannelGroup(id: string, name: string): void;
+    setChannelGroup(channelId: string, groupId: string | null): void;
+    saveChannelGroups(): Promise<void>;
   }
 
   export enum Setting {
@@ -170,8 +186,10 @@ export namespace Conversation {
     errorText: string;
     readonly key: string;
     readonly unread: UnreadState;
+    readonly unreadCount: number;
     settings: Settings;
     readonly adManager: AdManager;
+    addMessage(message: Message): Promise<void>;
     send(): Promise<void>;
     clear(): void;
     loadLastSent(): void;
@@ -244,6 +262,7 @@ export namespace Settings {
     recentChannels: Conversation.RecentChannelConversation[];
     hiddenUsers: string[];
     favoriteEIcons: Record<string, boolean>;
+    recentEIcons: string[];
     statusHistory: string[];
     statusPins: string[];
     searchHistory: (ExtendedSearchData | SearchData)[];
@@ -251,6 +270,10 @@ export namespace Settings {
     hideProfileComparisonSummary: boolean;
     hideProfileAnalysis: boolean;
     ads: Ad[];
+    channelGroups: {
+      groups: Conversation.ChannelGroup[];
+      assignments?: { [channelId: string]: string };
+    };
   };
 
   export interface Store {
@@ -318,6 +341,7 @@ export namespace Settings {
 
     readonly chatLayoutMode: 'classic' | 'modern';
     readonly messageGrouping: boolean;
+    readonly forceQuickConvoList: boolean;
 
     readonly horizonCacheDraftMessages: boolean;
     readonly horizonSaveDraftMessagesToDiskTimer: number;
@@ -327,6 +351,9 @@ export namespace Settings {
 
     readonly risingCharacterTheme: string | undefined;
     readonly soundTheme: string;
+    readonly soundThemeSoundVolumes: {
+      readonly [theme: string]: { readonly [sound: string]: number };
+    };
   }
 }
 
@@ -344,10 +371,12 @@ export interface Notifications {
   playSound(sound: string): void;
   requestPermission(): Promise<void>;
   initSounds(sounds: ReadonlyArray<string>): Promise<void>;
+  alert(message: string): void;
 }
 
 export interface State {
   settings: Settings;
   hiddenUsers: string[];
   favoriteEIcons: Record<string, boolean>;
+  recentEIcons: string[];
 }

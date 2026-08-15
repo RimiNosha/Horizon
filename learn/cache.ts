@@ -1,9 +1,22 @@
+/**
+ * @license MPL-2.0
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ *
+ * @copyright 2024-2026 Sylvia Roselie & Respective Horizon Contributors
+ * @version 1.0
+ * @see {@link https://github.com/Fchat-Horizon/Horizon|GitHub repo}
+ */
+
+import { emptyMap } from '../fchat/common';
+
 export interface CacheCollection<RecordType> {
   [key: string]: RecordType;
 }
 
 export abstract class Cache<RecordType> {
-  protected cache: CacheCollection<RecordType> = {};
+  protected cache: CacheCollection<RecordType> = emptyMap();
 
   get(name: string): RecordType | null {
     const key = Cache.nameKey(name);

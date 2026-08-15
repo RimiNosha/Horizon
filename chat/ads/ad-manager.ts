@@ -1,3 +1,14 @@
+/**
+ * @license MPL-2.0
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ *
+ * @copyright 2024-2026 Sylvia Roselie & Respective Horizon Contributors
+ * @version 1.0
+ * @see {@link https://github.com/Fchat-Horizon/Horizon|GitHub repo}
+ */
+
 import throat from 'throat';
 import * as _ from 'lodash';
 
@@ -5,8 +16,8 @@ import log from 'electron-log'; //tslint:disable-line:match-default-export-name
 
 import core from '../core';
 import { Conversation } from '../interfaces';
-import Timer = NodeJS.Timer;
 import ChannelConversation = Conversation.ChannelConversation;
+type Timer = ReturnType<typeof setTimeout>;
 
 const adManagerThroat = throat(1);
 
@@ -16,6 +27,7 @@ export interface RecoverableAd {
   nextPostDue: Date | undefined;
   firstPost: Date | undefined;
   expireDue: Date | undefined;
+  minPostDelaySeconds: number;
 }
 
 export class AdManager {
@@ -148,9 +160,12 @@ export class AdManager {
     );
 
     // tslint:disable-next-line: no-unnecessary-type-assertion
-    this.interval = setTimeout(async () => {
-      await this.sendNextPost();
-    }, nextInMs) as Timer;
+    this.interval = setTimeout(
+      async () => {
+        await this.sendNextPost();
+      },
+      Math.max(0, this.nextPostDue.getTime() - Date.now())
+    ) as Timer;
   }
 
   generateAdMap(): number[] {
@@ -230,11 +245,14 @@ export class AdManager {
     this.adMap = this.generateAdMap();
 
     // tslint:disable-next-line: no-unnecessary-type-assertion
-    this.interval = setTimeout(async () => {
-      this.firstPost = new Date();
+    this.interval = setTimeout(
+      async () => {
+        this.firstPost = new Date();
 
-      await this.sendNextPost();
-    }, initialWait) as Timer;
+        await this.sendNextPost();
+      },
+      Math.max(0, this.nextPostDue.getTime() - Date.now())
+    ) as Timer;
   }
 
   protected forceTimeout(waitTime: number): void {
@@ -258,9 +276,6 @@ export class AdManager {
 
     this.active = false;
     this.adIndex = 0;
-
-    // const message = new EventMessage(`Advertisements on channel [channel]${this.conversation.name}[/channel] have expired.`);
-    // addEventMessage(message);
   }
 
   renew(): void {
@@ -292,7 +307,8 @@ export class AdManager {
           index: adManager.adIndex,
           nextPostDue: adManager.nextPostDue,
           firstPost: adManager.firstPost,
-          expireDue: adManager.expireDue
+          expireDue: adManager.expireDue,
+          minPostDelaySeconds: adManager.minPostDelaySeconds
         };
       }
     );
@@ -326,7 +342,7 @@ export class AdManager {
     const adManager = channel.adManager;
 
     adManager.stop();
-    adManager.start();
+    adManager.start(AdManager.POSTING_PERIOD, ra.minPostDelaySeconds);
 
     adManager.adIndex = ra.index;
     adManager.firstPost = ra.firstPost;

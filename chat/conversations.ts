@@ -1,6 +1,5 @@
 import { queuedJoin } from '../fchat/channels';
-import { decodeHTML } from '../fchat/common';
-// import { CharacterCacheRecord } from '../learn/profile-cache';
+import { decodeHTML, emptyMap, toMap } from '../fchat/common';
 import { AdManager } from './ads/ad-manager';
 import {
   characterImage,
@@ -33,6 +32,15 @@ import isChannel = Interfaces.isChannel;
  */
 const CONVERSATION_CACHE_UPDATE_FREQ_IN_MS = 1000;
 
+/**
+ * @constant
+ * How long the startup auto-join must be quiet (no new channel join arriving)
+ * before pinned channels that never joined are treated as removed and pruned.
+ * The timer resets on every successful join, so a slow connection that delivers
+ * joins gradually keeps deferring the cleanup until the joins actually stop.
+ */
+const PINNED_CLEANUP_SETTLE_IN_MS = 10000;
+
 function createMessage(
   this: any,
   type: MessageType,
@@ -62,7 +70,8 @@ abstract class Conversation implements Interfaces.Conversation {
   abstract readonly name: string;
   messages: Interfaces.Message[] = [];
   errorText = '';
-  unread = Interfaces.UnreadState.None;
+  private _unread = Interfaces.UnreadState.None;
+  unreadCount = 0;
   lastRead: Interfaces.Message | undefined = undefined;
   infoText = '';
   abstract readonly maxMessageLength: number | undefined;
@@ -73,10 +82,9 @@ abstract class Conversation implements Interfaces.Conversation {
   protected allMessages: Interfaces.Message[] = [];
   readonly reportMessages: Interfaces.Message[] = [];
   private lastSent = '';
-  // private loadedMore = false;
   adManager: AdManager;
   cacheActive = false;
-  protected cacheInterval: NodeJS.Timer | undefined;
+  protected cacheInterval: ReturnType<typeof setInterval> | undefined;
 
   public static readonly conversationThroat = throat(1); // make sure user posting and ad posting won't get in each others' way
 
@@ -90,6 +98,17 @@ abstract class Conversation implements Interfaces.Conversation {
   markRead(): void {
     this.lastRead = this.messages[this.messages.length - 1];
     this.unread = Interfaces.UnreadState.None;
+  }
+
+  get unread(): Interfaces.UnreadState {
+    return this._unread;
+  }
+
+  set unread(state: Interfaces.UnreadState) {
+    this._unread = state;
+    if (state !== Interfaces.UnreadState.Mention) {
+      this.unreadCount = 0;
+    }
   }
 
   get settings(): Interfaces.Settings {
@@ -118,7 +137,7 @@ abstract class Conversation implements Interfaces.Conversation {
   clearText(): void {
     setImmediate(() => {
       this.enteredText = '';
-      core.cache.conversationDraftCache.deregister(this.name);
+      core.cache.conversationDraftCache.deregister(this.key);
     });
   }
 
@@ -149,7 +168,6 @@ abstract class Conversation implements Interfaces.Conversation {
   loadMore(): boolean {
     if (this.messages.length >= this.allMessages.length) return false;
     this.maxMessages += 50;
-    // this.loadedMore = true;
     this.messages = this.allMessages.slice(-this.maxMessages);
 
     EventBus.$emit('conversation-load-more', { conversation: this });
@@ -166,7 +184,6 @@ abstract class Conversation implements Interfaces.Conversation {
     this.lastRead = this.messages[this.messages.length - 1];
     this.maxMessages = 50;
     this.messages = this.allMessages.slice(-this.maxMessages);
-    // this.loadedMore = false;
     this.insertCount = 0;
   }
 
@@ -248,8 +265,6 @@ abstract class Conversation implements Interfaces.Conversation {
   public static async testPostDelay(): Promise<void> {
     const lastPostDelta = Date.now() - core.cache.getLastPost().getTime();
 
-    // console.log('Last Post Delta', lastPostDelta, ((lastPostDelta < Conversation.POST_DELAY) && (lastPostDelta > 0)));
-
     if (lastPostDelta < Conversation.POST_DELAY && lastPostDelta > 0) {
       await Bluebird.delay(Conversation.POST_DELAY - lastPostDelta);
     }
@@ -275,6 +290,15 @@ abstract class Conversation implements Interfaces.Conversation {
   protected formatEiconMessage(message: string): string {
     const eIconRegex =
       /^(?!\n)(?=.*\[eicon\].*\[\/eicon\].*\n.*\[eicon\].*\[\/eicon\])(.*\n\[eicon\].*\[\/eicon\].*)\s*/;
+
+    if (/^\/me\s+/i.test(message)) {
+      const body = message.replace(/^\/me\s+/i, '');
+      if (eIconRegex.test(body)) {
+        return '/me\n' + body;
+      }
+      return message;
+    }
+
     if (eIconRegex.test(message)) {
       return '\n' + message;
     }
@@ -346,8 +370,12 @@ class PrivateConversation
         );
         unreadState = Interfaces.UnreadState.Mention;
       }
-      if (this !== state.selectedConversation || !state.windowFocused)
+      if (this !== state.selectedConversation || !state.windowFocused) {
         this.unread = unreadState;
+        if (this.unread === Interfaces.UnreadState.Mention) {
+          this.unreadCount++;
+        }
+      }
       this.typingStatus = 'clear';
     }
   }
@@ -446,6 +474,7 @@ class PrivateConversation
       this.safeAddMessage(message);
 
       await this.logMessage(message, false);
+      core.cache.deregisterConversationDraft(this.key);
       this.markRead();
     });
   }
@@ -480,10 +509,7 @@ class ChannelConversation
   });
 
   constructor(readonly channel: Channel) {
-    super(
-      `#${channel.id.replace(/[^\w- ]/gi, '')}`,
-      state.pinned.channels.indexOf(channel.id) !== -1
-    );
+    super(`#${channel.id.replace(/[^\w- ]/gi, '')}`, false);
     core.watch<Channel.Mode | undefined>(
       function (): Channel.Mode | undefined {
         const c = this.channels.getChannel(channel.id);
@@ -608,6 +634,8 @@ class ChannelConversation
       1
     );
     state.channelConversations.splice(newIndex, 0, this);
+    state.syncGroupChannels();
+    void state.saveChannelGroups();
     return state.savePinned();
   }
 
@@ -751,8 +779,8 @@ class ConsoleConversation extends Conversation {
 class State implements Interfaces.State {
   privateConversations: PrivateConversation[] = [];
   channelConversations: ChannelConversation[] = [];
-  privateMap: { [key: string]: PrivateConversation | undefined } = {};
-  channelMap: { [key: string]: ChannelConversation | undefined } = {};
+  privateMap: { [key: string]: PrivateConversation | undefined } = emptyMap();
+  channelMap: { [key: string]: ChannelConversation | undefined } = emptyMap();
   consoleTab!: ConsoleConversation;
   selectedConversation: Conversation = this.consoleTab;
   lastConversation: Conversation = this.selectedConversation;
@@ -761,20 +789,29 @@ class State implements Interfaces.State {
   pinned!: { channels: string[]; private: string[] };
   settings!: { [key: string]: Interfaces.Settings };
   modes!: { [key: string]: Channel.Mode | undefined };
+  channelGroups: Interfaces.ChannelGroup[] = [];
+  pinnedCleanupTimer?: ReturnType<typeof setTimeout>;
+  pinnedCleanupArmed = false;
+
+  get channelGroupAssignments(): { [channelId: string]: string } {
+    const map: { [id: string]: string } = emptyMap();
+    for (const g of this.channelGroups)
+      for (const id of g.channels) map[id] = g.id;
+    return map;
+  }
   windowFocused = document.hasFocus();
 
   navigationHistory: Conversation[] = [];
   navigationHistoryIndex: number = -1;
   private isNavigatingHistory: boolean = false;
 
-  get hasNew(): boolean {
+  get hasNew(): number {
     return (
-      this.privateConversations.some(
-        x => x.unread === Interfaces.UnreadState.Mention
-      ) ||
-      this.channelConversations.some(
-        x => x.unread === Interfaces.UnreadState.Mention
-      )
+      this.privateConversations.reduce(
+        (sum, item) => sum + item.unreadCount,
+        0
+      ) +
+      this.channelConversations.reduce((sum, item) => sum + item.unreadCount, 0)
     );
   }
 
@@ -812,14 +849,120 @@ class State implements Interfaces.State {
       : this.privateMap[key];
   }
 
+  syncGroupChannels(): void {
+    const assignments = this.channelGroupAssignments;
+    for (const group of this.channelGroups)
+      group.channels = this.channelConversations
+        .filter(c => assignments[c.channel.id] === group.id)
+        .map(c => c.channel.id);
+  }
+
+  /**
+   * Arms (or, if already armed, restarts) the settle timer that prunes pinned
+   * channels which failed to join. Called once after the startup auto-join and
+   * again on every successful join, so the prune only runs once joins have
+   * stopped arriving — never while a slow connection is still delivering them.
+   */
+  schedulePinnedCleanup(): void {
+    if (!this.pinnedCleanupArmed) return;
+    clearTimeout(this.pinnedCleanupTimer);
+    this.pinnedCleanupTimer = setTimeout(() => {
+      this.pinnedCleanupArmed = false;
+      this.pruneRemovedChannels();
+    }, PINNED_CLEANUP_SETTLE_IN_MS);
+  }
+
+  /**
+   * Removes pinned/grouped channels that could not be joined on startup. FServ
+   * does not report failed joins, so once the startup join burst has settled,
+   * any grouped channel that never produced a live conversation is treated as
+   * removed server-side. Mirrors the pre-grouping behavior where the pinned
+   * list was re-derived from live conversations, and additionally tells the
+   * user which channels were dropped.
+   */
+  pruneRemovedChannels(): void {
+    if (!core.connection.isOpen) return;
+    const removed = Object.keys(this.channelGroupAssignments).filter(
+      id => this.channelMap[id] === undefined
+    );
+    if (removed.length === 0) return;
+    this.syncGroupChannels();
+    void this.saveChannelGroups();
+    void this.savePinned();
+    const links = removed.map(id => {
+      const recent = this.recentChannels.find(c => c.channel === id);
+      const name = recent !== undefined ? recent.name : id;
+      return id.startsWith('adh-')
+        ? `[session=${name}]${id}[/session]`
+        : `[channel]${name}[/channel]`;
+    });
+    void this.consoleTab.addMessage(
+      new EventMessage(l('channel.group.removedUnjoinable', links.join(', ')))
+    );
+  }
+
   async savePinned(): Promise<void> {
-    this.pinned.channels = this.channelConversations
-      .filter(x => x.isPinned)
-      .map(x => x.channel.id);
+    this.pinned.channels = this.channelGroups.flatMap(g => g.channels);
     this.pinned.private = this.privateConversations
       .filter(x => x.isPinned)
       .map(x => x.name);
     await core.settingsStore.set('pinned', this.pinned);
+  }
+
+  async saveChannelGroups(): Promise<void> {
+    await core.settingsStore.set('channelGroups', {
+      groups: this.channelGroups
+    });
+  }
+
+  createChannelGroup(name: string): string {
+    const id = `group_${Date.now()}`;
+    this.channelGroups.push({
+      id,
+      name,
+      collapsed: false,
+      order: this.channelGroups.length,
+      channels: []
+    });
+    void this.saveChannelGroups();
+    return id;
+  }
+
+  private removeChannelFromGroups(channelId: string): void {
+    for (const g of this.channelGroups) {
+      const i = g.channels.indexOf(channelId);
+      if (i !== -1) {
+        g.channels.splice(i, 1);
+        return;
+      }
+    }
+  }
+
+  deleteChannelGroup(id: string): void {
+    const idx = this.channelGroups.findIndex(g => g.id === id);
+    if (idx === -1) return;
+    this.channelGroups.splice(idx, 1);
+    this.channelGroups.forEach((g, i) => (g.order = i));
+    void this.saveChannelGroups();
+    void this.savePinned();
+  }
+
+  renameChannelGroup(id: string, name: string): void {
+    const group = this.channelGroups.find(g => g.id === id);
+    if (group) {
+      group.name = name;
+      void this.saveChannelGroups();
+    }
+  }
+
+  setChannelGroup(channelId: string, groupId: string | null): void {
+    this.removeChannelFromGroups(channelId);
+    if (groupId !== null) {
+      const group = this.channelGroups.find(g => g.id === groupId);
+      if (group) group.channels.push(channelId);
+    }
+    void this.saveChannelGroups();
+    void this.savePinned();
   }
 
   async saveModes(): Promise<void> {
@@ -834,6 +977,7 @@ class State implements Interfaces.State {
   show(conversation: Conversation): void {
     if (conversation === this.selectedConversation) return;
     this.lastConversation = this.selectedConversation;
+    this.lastConversation.unreadCount = 0;
     this.selectedConversation.onHide();
     conversation.unread = Interfaces.UnreadState.None;
     this.selectedConversation = conversation;
@@ -893,26 +1037,57 @@ class State implements Interfaces.State {
       private: [],
       channels: []
     };
-    this.modes = (await core.settingsStore.get('modes')) || {};
-    for (const conversation of this.channelConversations)
-      conversation._isPinned =
-        this.pinned.channels.indexOf(conversation.channel.id) !== -1;
+    this.modes = toMap(await core.settingsStore.get('modes'));
     for (const conversation of this.privateConversations)
       conversation._isPinned =
         this.pinned.private.indexOf(conversation.name) !== -1;
     this.recent = (await core.settingsStore.get('recent')) || [];
     this.recentChannels =
       (await core.settingsStore.get('recentChannels')) || [];
-    const settings =
+    const settings = toMap(
       <{ [key: string]: ConversationSettings }>(
         await core.settingsStore.get('conversationSettings')
-      ) || {};
+      )
+    );
     for (const key in settings) {
       settings[key] = Object.assign(new ConversationSettings(), settings[key]);
       const conv = this.byKey(key);
       if (conv !== undefined) conv._settings = settings[key];
     }
     this.settings = settings;
+    const channelGroupData = (await core.settingsStore.get(
+      'channelGroups'
+    )) || { groups: [] };
+    this.channelGroups = channelGroupData.groups;
+    // Migrate from old format where channel assignments were stored separately
+    if (channelGroupData.assignments !== undefined) {
+      const oldAssignments = channelGroupData.assignments;
+      for (const g of this.channelGroups) {
+        g.channels = Object.entries(oldAssignments)
+          .filter(([, gid]) => gid === g.id)
+          .map(([cid]) => cid);
+      }
+      await this.saveChannelGroups();
+    }
+    for (const g of this.channelGroups) if (!g.channels) g.channels = [];
+    const ungroupedPinned = this.pinned.channels.filter(
+      (id: string) => !this.channelGroups.some(g => g.channels.includes(id))
+    );
+    if (ungroupedPinned.length > 0) {
+      const groupId = `group_${Date.now()}`;
+      this.channelGroups.push({
+        id: groupId,
+        name: l('channel.group.pinned'),
+        collapsed: false,
+        order: this.channelGroups.length,
+        channels: ungroupedPinned
+      });
+      await this.saveChannelGroups();
+      this.consoleTab.addMessage(
+        new EventMessage(l('channel.group.noticePinned'))
+      );
+    }
+    this.pinned.channels = this.channelGroups.flatMap(g => g.channels);
     //tslint:enable
   }
 }
@@ -1086,7 +1261,10 @@ async function initConversationCache(this: Conversation): Promise<void> {
   // Restore message draft if it exists (e.g. accidentally closing the tab). Be sure the cache is reset for a new character if needed.
   await core.cache.conversationDraftCache.resetCacheIfNeeded();
 
-  const draft = core.cache.getConversationDraft(this.name);
+  // Only an open conversation knows both the display name pre-key drafts were stored under and its unique key.
+  core.cache.migrateConversationDraft(this.name, this.key);
+
+  const draft = core.cache.getConversationDraft(this.key);
   this.enteredText = draft;
 
   if (!this.cacheActive) {
@@ -1106,8 +1284,8 @@ async function initConversationCache(this: Conversation): Promise<void> {
       }
 
       this.enteredText
-        ? core.cache.registerConversationDraft(this.name, this.enteredText)
-        : core.cache.deregisterConversationDraft(this.name);
+        ? core.cache.registerConversationDraft(this.key, this.enteredText)
+        : core.cache.deregisterConversationDraft(this.key);
     }, CONVERSATION_CACHE_UPDATE_FREQ_IN_MS);
   }
 }
@@ -1129,12 +1307,14 @@ export default function (this: any): Interfaces.State {
   });
   const connection = core.connection;
   connection.onEvent('connecting', async isReconnect => {
+    state.pinnedCleanupArmed = false;
+    clearTimeout(state.pinnedCleanupTimer);
     state.channelConversations = [];
-    state.channelMap = {};
+    state.channelMap = emptyMap();
     if (!isReconnect) {
       state.consoleTab = new ConsoleConversation();
       state.privateConversations = [];
-      state.privateMap = {};
+      state.privateMap = emptyMap();
     } else state.consoleTab.unread = Interfaces.UnreadState.None;
     state.selectedConversation = state.consoleTab;
     EventBus.$emit('select-conversation', {
@@ -1147,6 +1327,11 @@ export default function (this: any): Interfaces.State {
     for (const item of state.pinned.private)
       state.getPrivate(core.characters.get(item));
     queuedJoin(state.pinned.channels.slice());
+    // Arm the settle timer; it restarts on every join (see the join handler
+    // below) and only fires once joins have stopped arriving, then prunes any
+    // pinned channels that never joined (removed server-side).
+    state.pinnedCleanupArmed = true;
+    state.schedulePinnedCleanup();
   });
   core.channels.onEvent(async (type, channel, member) => {
     if (type === 'join')
@@ -1154,6 +1339,10 @@ export default function (this: any): Interfaces.State {
         const conv = new ChannelConversation(channel);
         state.channelMap[channel.id] = conv;
         state.channelConversations.push(conv);
+        void state.savePinned();
+        // A pinned channel joined: defer the dead-channel cleanup until the
+        // join burst goes quiet, so slow connections aren't pruned mid-join.
+        state.schedulePinnedCleanup();
         const index = state.recentChannels.findIndex(
           c => c.channel === channel.id
         );
@@ -1277,8 +1466,10 @@ export default function (this: any): Interfaces.State {
         characterImage(data.character),
         'attention'
       );
-      if (conversation !== state.selectedConversation || !state.windowFocused)
+      if (conversation !== state.selectedConversation || !state.windowFocused) {
         conversation.unread = Interfaces.UnreadState.Mention;
+        conversation.unreadCount++;
+      }
       message.isHighlight = true;
       await state.consoleTab.addMessage(
         new EventMessage(
@@ -1296,7 +1487,11 @@ export default function (this: any): Interfaces.State {
       await core.notifications.notify(
         conversation,
         data.character,
-        data.message,
+        l(
+          'events.watchedUserPosted.notification',
+          conversation.name,
+          data.message
+        ),
         characterImage(data.character),
         'attention'
       );
@@ -1311,8 +1506,10 @@ export default function (this: any): Interfaces.State {
           time
         )
       );
-      if (conversation !== state.selectedConversation || !state.windowFocused)
+      if (conversation !== state.selectedConversation || !state.windowFocused) {
         conversation.unread = Interfaces.UnreadState.Mention;
+        conversation.unreadCount++;
+      }
     } else if (conversation.settings.notify === Interfaces.Setting.True) {
       await core.notifications.notify(
         conversation,
@@ -1321,16 +1518,17 @@ export default function (this: any): Interfaces.State {
         characterImage(data.character),
         'attention'
       );
-      if (conversation !== state.selectedConversation || !state.windowFocused)
+      if (conversation !== state.selectedConversation || !state.windowFocused) {
         conversation.unread = Interfaces.UnreadState.Mention;
+        conversation.unreadCount++;
+      }
     }
   });
   connection.onMessage('LRP', async (data, time) => {
     const char = core.characters.get(data.character);
     const conv = state.channelMap[data.channel.toLowerCase()];
     if (conv === undefined) return core.channels.leave(data.channel);
-    if (char.isIgnored || core.state.hiddenUsers.indexOf(char.name) !== -1)
-      return;
+    if (char.isIgnored || core.isHidden(char.name)) return;
 
     const msg = new Message(
       MessageType.Ad,
@@ -1377,8 +1575,13 @@ export default function (this: any): Interfaces.State {
           characterImage(data.character),
           'attention'
         );
-        if (conversation !== state.selectedConversation || !state.windowFocused)
+        if (
+          conversation !== state.selectedConversation ||
+          !state.windowFocused
+        ) {
           conversation.unread = Interfaces.UnreadState.Mention;
+          conversation.unreadCount++;
+        }
         message.isHighlight = true;
       }
       await conversation.addMessage(message);
@@ -1448,29 +1651,45 @@ export default function (this: any): Interfaces.State {
   connection.onMessage('CBU', async (data, time) => {
     const conv = state.channelMap[data.channel.toLowerCase()];
     if (conv === undefined) return core.channels.leave(data.channel);
-    const text = l('events.ban', conv.name, data.character, data.operator);
-    conv.infoText = text;
-    return addEventMessage(new EventMessage(text, time));
+    const logtext = l(
+      'events.ban',
+      conv.name,
+      data.character,
+      `[user]${data.operator}[/user]`
+    );
+    conv.infoText = l('events.ban', conv.name, data.character, data.operator);
+    return addEventMessage(new EventMessage(logtext, time));
   });
   connection.onMessage('CKU', async (data, time) => {
     const conv = state.channelMap[data.channel.toLowerCase()];
     if (conv === undefined) return core.channels.leave(data.channel);
-    const text = l('events.kick', conv.name, data.character, data.operator);
-    conv.infoText = text;
-    return addEventMessage(new EventMessage(text, time));
+    const logtext = l(
+      'events.kick',
+      conv.name,
+      data.character,
+      `[user]${data.operator}[/user]`
+    );
+    conv.infoText = l('events.kick', conv.name, data.character, data.operator);
+    return addEventMessage(new EventMessage(logtext, time));
   });
   connection.onMessage('CTU', async (data, time) => {
     const conv = state.channelMap[data.channel.toLowerCase()];
     if (conv === undefined) return core.channels.leave(data.channel);
-    const text = l(
+    const logtext = l(
+      'events.timeout',
+      conv.name,
+      data.character,
+      `[user]${data.operator}[/user]`,
+      data.length.toString()
+    );
+    conv.infoText = l(
       'events.timeout',
       conv.name,
       data.character,
       data.operator,
       data.length.toString()
     );
-    conv.infoText = text;
-    return addEventMessage(new EventMessage(text, time));
+    return addEventMessage(new EventMessage(logtext, time));
   });
   connection.onMessage('BRO', async (data, time) => {
     if (data.character !== undefined) {
@@ -1485,6 +1704,7 @@ export default function (this: any): Interfaces.State {
       );
       await state.consoleTab.addMessage(message);
       state.consoleTab.unread = Interfaces.UnreadState.Mention;
+      state.consoleTab.unreadCount++;
       await core.notifications.notify(
         state.consoleTab,
         l('events.broadcast.notification', data.character),
@@ -1515,9 +1735,12 @@ export default function (this: any): Interfaces.State {
 
   connection.onMessage('IGN', async (data, time) => {
     if (data.action !== 'add' && data.action !== 'delete') return;
-    const text = l(`events.ignore_${data.action}`, data.character);
-    state.selectedConversation.infoText = text;
-    return addEventMessage(new EventMessage(text, time));
+    const key = `events.ignore_${data.action}`;
+    const name = data.character;
+    state.selectedConversation.infoText = l(key, name);
+    return addEventMessage(
+      new EventMessage(l(key, `[user]${name}[/user]`), time)
+    );
   });
   connection.onMessage('RTB', async (data, time) => {
     let url = 'https://www.f-list.net/';

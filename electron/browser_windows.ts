@@ -38,10 +38,10 @@ const tabMap: { [key: string]: electron.WebContents } = {};
 
 /**
  * Used to track whether a window has new messages.
- * This is a map where the key is the window ID and the value is a boolean indicating whether there are new messages.
+ * This is a map where the key is the window ID and the value is a number indicating how many new messages there are.
  * @internal
  */
-const newMessagesMap: { [id: number]: boolean } = {};
+const newMessagesMap: { [id: number]: number } = {};
 
 /**
  * Used to track the injected CSS per key value. Inserting CSS returns a key value that can later be used to remove the value.
@@ -62,6 +62,16 @@ const trayIcon: string = path.join(
         : './build/trayTemplate.png'
     ).default
   )
+);
+
+/**
+ * Tray icon path for the notified state.
+ * Used only on Windows and Linux.
+ * @internal
+ */
+const trayIconNotif: string = path.join(
+  __dirname,
+  <string>require('./build/tray-notif.png').default
 );
 
 /**
@@ -88,51 +98,121 @@ const winIcon: string = path.join(
   <string>require('./build/icon.ico').default
 );
 
-/**
- * Empty badge icon for the overlay.
- * @internal
- */
-const emptyBadge = electron.nativeImage.createEmpty();
+const updaterSplashHtml: string = path.join(
+  __dirname,
+  <string>require('./updater-splash.html').default
+);
 
 /**
- * Badge icon for the overlay, indicating new messages.
- * @internal
+ * Badge icon path for the app icon overlay. Used for when there are new messages and numbered badges are disabled.
  */
-const badge = electron.nativeImage.createFromPath(
+const badge: electron.NativeImage = electron.nativeImage.createFromPath(
   path.join(__dirname, <string>require('./build/badge.png').default)
 );
 
 /**
- * Handles the 'has-new' IPC event.
- * This event is triggered when there are new messages in the application.
- * It updates the dock badge on macOS and applies an overlay icon to the window that sent the event on Window and Linux.
- * @event
- * @param {IpcMainEvent} e
- * @param {boolean} hasNew
+ * Array of badge icons for the app icon overlay, the index indicating the amount of new messages with 0 being an empty icon and 10 representing any values above 9.
+ * @internal
  */
-electron.ipcMain.on('has-new', (e: IpcMainEvent, hasNew: boolean) => {
-  if (process.platform === 'darwin' && app.dock !== undefined)
-    app.dock.setBadge(hasNew ? '•' : '');
-  const window = electron.BrowserWindow.fromWebContents(e.sender);
-  if (window !== undefined && window !== null) {
-    applyOverlayIcon(window, hasNew);
-    newMessagesMap[window.id] = hasNew;
+const badges: electron.NativeImage[] = [
+  electron.nativeImage.createEmpty(),
+  electron.nativeImage.createFromPath(
+    path.join(__dirname, <string>require('./build/badges/1.png').default)
+  ),
+  electron.nativeImage.createFromPath(
+    path.join(__dirname, <string>require('./build/badges/2.png').default)
+  ),
+  electron.nativeImage.createFromPath(
+    path.join(__dirname, <string>require('./build/badges/3.png').default)
+  ),
+  electron.nativeImage.createFromPath(
+    path.join(__dirname, <string>require('./build/badges/4.png').default)
+  ),
+  electron.nativeImage.createFromPath(
+    path.join(__dirname, <string>require('./build/badges/5.png').default)
+  ),
+  electron.nativeImage.createFromPath(
+    path.join(__dirname, <string>require('./build/badges/6.png').default)
+  ),
+  electron.nativeImage.createFromPath(
+    path.join(__dirname, <string>require('./build/badges/7.png').default)
+  ),
+  electron.nativeImage.createFromPath(
+    path.join(__dirname, <string>require('./build/badges/8.png').default)
+  ),
+  electron.nativeImage.createFromPath(
+    path.join(__dirname, <string>require('./build/badges/9.png').default)
+  ),
+  electron.nativeImage.createFromPath(
+    path.join(__dirname, <string>require('./build/badges/9plus.png').default)
+  )
+];
+
+/**
+ * Handles the 'has-new' IPC event.
+ * This event is triggered when there are new messages in an appplication window's tab(s).
+ * It updates the dock badge on macOS and applies an overlay icon to all windows on Windows and Linux.
+ * @event
+ * @param {IpcMainEvent} e Event reference.
+ * @param {number} hasNew The amount of new messages for the window that called it. If hasNew =< 0, the user has no new messages
+ * @param {boolean} numberedBadges Whether to show the number of new messages in the badge or just a dot indicating that there are new messages. This is used on Windows and Linux, as macOS does not support numbered badges.
+ */
+electron.ipcMain.on(
+  'has-new',
+  (e: IpcMainEvent, hasNew: number, numberedBadges: boolean) => {
+    log.debug('app.hasNew', { hasNew, numberedBadges });
+    const window = electron.BrowserWindow.fromWebContents(e.sender);
+    if (window !== undefined && window !== null) {
+      newMessagesMap[window.id] = hasNew;
+    }
+    updateNotificationBadges(numberedBadges);
   }
-});
+);
+
+export function updateNotificationBadges(numberedBadges: boolean) {
+  const totalCount = windows.reduce(
+    (sum, item) => sum + newMessagesMap[item.id],
+    0
+  );
+  if (process.platform !== 'win32') {
+    if (numberedBadges) {
+      app.setBadgeCount(totalCount);
+    } else {
+      if (app.dock) {
+        app.dock.setBadge(totalCount > 0 ? '.' : '');
+      }
+    }
+  } else {
+    windows.forEach(browserWindow => {
+      applyWin32OverlayIcon(browserWindow, totalCount, numberedBadges);
+    });
+    tray.setImage(totalCount > 0 ? trayIconNotif : trayIcon);
+  }
+}
 
 /**
  * Apply an overlay icon to the given window based on whether there are new messages.
  * @function
- * @param {electron.BrowserWindow} window
+ * @param {electron.BrowserWindow} browserWindow
  * The window to apply the overlay icon to.
- * @param {boolean} hasNew
- * Whether or not the window has new messages.
+ * @param {number} badgeCount
+ * The amount of new messages accumilated across all active tabs. If this value is below 1, no badge is drawn.
+ * @param {boolean} numberedBadges
+ * Whether to show the number of new messages in the badge or just a dot indicating that there are new messages. If true, the badge will show the number of new messages up to 10, with 10 representing any value above 9. If false, the badge will just show a dot if there are any new messages.
  * @internal
  */
-function applyOverlayIcon(window: electron.BrowserWindow, hasNew: boolean) {
-  window.setOverlayIcon(
-    hasNew ? badge : emptyBadge,
-    hasNew ? 'New messages' : ''
+function applyWin32OverlayIcon(
+  browserWindow: electron.BrowserWindow,
+  badgeCount: number,
+  numberedBadges: boolean
+) {
+  browserWindow.setOverlayIcon(
+    numberedBadges
+      ? badges[Math.max(Math.min(badgeCount, 10), 0)]
+      : badgeCount > 0
+        ? badge
+        : null,
+    badgeCount > 0 ? ` ${badgeCount} new messages` : ''
   );
 }
 
@@ -195,6 +275,8 @@ export function openTab(w: electron.BrowserWindow) {
 
 /**
  * Creates a new main window for the application.
+ * If all windows are hidden but not closed, this function will show all windows.
+ * If the maximum number of tabs has been reached, see {@link maxTabCount}, this function will return undefined and no new window will be created.
  * @function
  * @param {GeneralSettings} settings
  * This contains the general settings for the application.
@@ -203,6 +285,7 @@ export function openTab(w: electron.BrowserWindow) {
  * @param {string} baseDir
  * Base directory for the application, used for the ad blocker.
  * @returns {electron.BrowserWindow | undefined}
+ * Reference to the created window or undefined if the window could not be created (for example, if the maximum number of tabs has been reached).
  */
 export function createMainWindow(
   settings: GeneralSettings,
@@ -210,7 +293,18 @@ export function createMainWindow(
   baseDir: string
 ): electron.BrowserWindow | undefined {
   log.info('browser_windows.createMainWindow', { ImporterHint });
-  if (tabCount >= maxTabCount) return;
+  if (
+    windows.every(item => {
+      !item.isVisible;
+    })
+  ) {
+    windows.forEach(item => {
+      item.show();
+    });
+  }
+  if (tabCount >= maxTabCount) {
+    return;
+  }
   const lastState = windowState.getSavedWindowState();
 
   let windowBackgroundColor: string;
@@ -258,14 +352,13 @@ export function createMainWindow(
 
   if (process.platform === 'darwin') {
     windowProperties.titleBarStyle = 'hiddenInset';
-    // windowProperties.frame = true;
   } else {
-    windowProperties.frame = false;
+    windowProperties.frame = settings.forceNativeWindowControls;
   }
 
   const window = new electron.BrowserWindow(windowProperties);
 
-  newMessagesMap[window.id] = false;
+  newMessagesMap[window.id] = 0;
   remoteMain.enable(window.webContents);
 
   windows.push(window);
@@ -280,7 +373,11 @@ export function createMainWindow(
   });
 
   window.on('show', () => {
-    applyOverlayIcon(window, newMessagesMap[window.id]);
+    applyWin32OverlayIcon(
+      window,
+      newMessagesMap[window.id],
+      settings.horizonShowNotificationBadge
+    );
   });
 
   window.on('closed', () => {
@@ -361,7 +458,29 @@ export function createMainWindow(
   if (!tray) {
     tray = new electron.Tray(trayIcon);
     tray.setToolTip(l('title'));
-    tray.on('click', _e => tray.popUpContextMenu());
+    // single click opens context menu, double click opens all windows
+    let clickTimeout: NodeJS.Timeout | undefined;
+    const showAll = () => {
+      if (clickTimeout) {
+        clearTimeout(clickTimeout);
+        clickTimeout = undefined;
+      }
+      showAllWindows();
+    };
+    // left clicking on tray icons doesn't do anything in linux and attaching a click handler
+    // messes things up even more, so right clicking to see the context menu is required
+    tray.on('click', _e => {
+      if (clickTimeout) {
+        showAll();
+      } else {
+        clickTimeout = setTimeout(() => {
+          clickTimeout = undefined;
+          tray.popUpContextMenu();
+        }, 200);
+      }
+    });
+    // works across windows/mac/linux
+    tray.on('double-click', _e => showAll());
 
     tray.setContextMenu(electron.Menu.buildFromTemplate(createTrayMenu()));
     log.debug('init.window.add.tray');
@@ -473,17 +592,14 @@ function createTrayMenu(): electron.MenuItemConstructorOptions[] {
   ).map(([tabId, webContents]) => ({
     label: tabId,
     click: () => {
-      // Example: focus this tab, or any action you want
-      windows.forEach(winow => {
-        winow.webContents.focus();
-        winow.show();
-        winow.webContents.send('show-tab', webContents.id);
+      windows.forEach(window => {
+        window.webContents.send('show-tab', webContents.id);
       });
-      webContents.focus();
     }
   }));
   return [
     { label: l('title'), enabled: false },
+    { label: l('action.showAllWindows'), click: () => showAllWindows() },
     { type: 'separator' },
     ...tabItems,
     {
@@ -543,11 +659,15 @@ export async function quitAllWindows() {
 }
 
 /**
- * Shows all browser windows.
+ * Restores, shows, and focuses all browser windows.
  * @function
  */
 export function showAllWindows() {
-  for (const w of windows) w.show();
+  for (const w of windows) {
+    if (w.isMinimized()) w.restore();
+    w.show();
+    w.focus();
+  }
 }
 /**
  * Toggles the update notice in all browser windows through an IPC message.
@@ -560,6 +680,103 @@ export function showAllWindows() {
 export function toggleUpdateNotice(updateAvailable: boolean, version?: string) {
   for (const w of windows)
     w.webContents.send('update-available', updateAvailable, version);
+}
+
+/**
+ * Sends download progress information to all open windows.
+ * @param {number} percent - Download progress percentage (0-100).
+ * @param {boolean} [done=false] - Whether the download has completed.
+ */
+export function sendUpdateProgress(percent: number, done: boolean = false) {
+  for (const w of windows)
+    w.webContents.send('update-download-progress', percent, done);
+}
+
+let updaterSplash: electron.BrowserWindow | undefined;
+
+let updaterSplashShownAt: number | undefined;
+
+let updaterSplashShown: Promise<void> | undefined;
+
+export function createUpdaterSplashWindow(
+  updateTag?: string
+): electron.BrowserWindow {
+  const window = new electron.BrowserWindow({
+    width: 360,
+    height: 140,
+    center: true,
+    frame: false,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    show: false,
+    backgroundColor: '#1b1b21',
+    icon: process.platform === 'win32' ? winIcon : pngIcon,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true
+    }
+  });
+
+  updaterSplashProgress = undefined;
+  window.loadFile(updaterSplashHtml, {
+    query: {
+      status: l('update.splash.updating'),
+      ...(updateTag ? { version: updateTag } : {})
+    }
+  });
+  window.webContents.on('did-finish-load', () => {
+    if (updaterSplashProgress !== undefined)
+      pushUpdaterSplashProgress(updaterSplashProgress);
+  });
+  updaterSplashShown = new Promise(resolve =>
+    window.once('ready-to-show', () => {
+      window.show();
+      updaterSplashShownAt = Date.now();
+      resolve();
+    })
+  );
+  window.on('closed', () => {
+    if (updaterSplash === window) updaterSplash = undefined;
+  });
+  updaterSplash = window;
+  return window;
+}
+
+export async function updaterSplashSeen(
+  minVisibleMs: number,
+  maxWaitMs: number
+): Promise<void> {
+  if (!updaterSplashShown) return;
+  const delay = (ms: number): Promise<void> =>
+    new Promise(resolve => setTimeout(resolve, ms));
+  await Promise.race([
+    updaterSplashShown.then(() =>
+      delay(Math.max(0, updaterSplashShownAt! + minVisibleMs - Date.now()))
+    ),
+    delay(maxWaitMs)
+  ]);
+}
+
+let updaterSplashProgress: number | undefined;
+
+function pushUpdaterSplashProgress(percent: number): void {
+  if (!updaterSplash || updaterSplash.isDestroyed()) return;
+  updaterSplash.webContents
+    .executeJavaScript(`window.setProgress && window.setProgress(${percent})`)
+    .catch(() => {});
+}
+
+export function setUpdaterSplashProgress(percent: number): void {
+  updaterSplashProgress = percent;
+  pushUpdaterSplashProgress(percent);
+}
+
+export function closeUpdaterSplash(): void {
+  if (updaterSplash && !updaterSplash.isDestroyed()) updaterSplash.close();
+  updaterSplash = undefined;
 }
 
 /**
@@ -608,6 +825,11 @@ export function createSettingsWindow(
 
   if (process.platform === 'darwin') {
     windowProperties.titleBarStyle = 'hiddenInset';
+  } else if (settings.forceNativeWindowControls) {
+    windowProperties.frame = true;
+    windowProperties.minimizable = false;
+    windowProperties.maximizable = false;
+    windowProperties.autoHideMenuBar = true;
   }
   const browserWindow = new electron.BrowserWindow(windowProperties);
   remoteMain.enable(browserWindow.webContents);
@@ -644,10 +866,11 @@ export function createChangelogWindow(
   settings: GeneralSettings,
   ImporterHint: ImporterHint,
   parentWindow: electron.BrowserWindow,
-  updateVer?: string
+  updateVer?: string,
+  updateMode?: 'auto' | 'manual'
 ): electron.BrowserWindow | undefined {
-  let desiredHeight = 700;
-  let desiredWidth = 600;
+  let desiredHeight = updateVer ? 850 : 700;
+  let desiredWidth = updateVer ? 900 : 600;
 
   const windowProperties: electron.BrowserWindowConstructorOptions = {
     center: true,
@@ -675,6 +898,11 @@ export function createChangelogWindow(
 
   if (process.platform === 'darwin') {
     windowProperties.titleBarStyle = 'hiddenInset';
+  } else if (settings.forceNativeWindowControls) {
+    windowProperties.frame = true;
+    windowProperties.minimizable = false;
+    windowProperties.maximizable = false;
+    windowProperties.autoHideMenuBar = true;
   }
   const browserWindow = new electron.BrowserWindow(windowProperties);
   remoteMain.enable(browserWindow.webContents);
@@ -682,7 +910,8 @@ export function createChangelogWindow(
     query: {
       settings: JSON.stringify(settings),
       import: ImporterHint === 'none' ? '' : ImporterHint,
-      updateVer: updateVer || ''
+      updateVer: updateVer || '',
+      updateMode: updateMode || ''
     }
   });
 
@@ -739,6 +968,11 @@ export function createExporterWindow(
 
   if (process.platform === 'darwin') {
     windowProperties.titleBarStyle = 'hiddenInset';
+  } else if (settings.forceNativeWindowControls) {
+    windowProperties.frame = true;
+    windowProperties.minimizable = false;
+    windowProperties.maximizable = false;
+    windowProperties.autoHideMenuBar = true;
   }
 
   const browserWindow = new electron.BrowserWindow(windowProperties);
@@ -766,28 +1000,48 @@ export function createExporterWindow(
  * Returns the newly created about window.
  */
 export function createAboutWindow(
+  settings: GeneralSettings,
   parentWindow: electron.BrowserWindow
 ): electron.BrowserWindow {
   const icon = process.platform === 'win32' ? winIcon : pngIcon;
+  const appCommit = process.env.APP_COMMIT || 'unknown';
+  const appVersion =
+    process.env.APP_VERSION || electron.app.getVersion() || 'unknown';
 
-  const about = new electron.BrowserWindow({
-    width: 400,
-    height: 400, // Initial height
+  const aboutWindowProperties: electron.BrowserWindowConstructorOptions = {
     center: true,
-    resizable: false,
-    minimizable: false,
-    fullscreenable: false,
-    useContentSize: process.platform === 'win32', // Important for Windows
-    modal: process.platform !== 'darwin',
-    parent: parentWindow,
-    autoHideMenuBar: true,
     show: false,
     icon,
+    frame: false,
+    minWidth: 460,
+    width: 460,
+    height: 620,
+    resizable: false,
+    modal: true,
+    parent: parentWindow,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    useContentSize: true,
+    autoHideMenuBar: true,
     webPreferences: {
+      webviewTag: true,
       nodeIntegration: true,
-      contextIsolation: false
-    }
-  });
+      nodeIntegrationInWorker: true,
+      spellcheck: true,
+      enableRemoteModule: true,
+      contextIsolation: false,
+      partition: 'persist:fchat'
+    } as any
+  };
+
+  if (process.platform === 'darwin') {
+    aboutWindowProperties.frame = true;
+    aboutWindowProperties.height = 560;
+    aboutWindowProperties.modal = false;
+  }
+
+  const about = new electron.BrowserWindow(aboutWindowProperties);
 
   remoteMain.enable(about.webContents);
 
@@ -797,54 +1051,17 @@ export function createAboutWindow(
     return { action: 'deny' };
   });
 
-  // Set package version
-  process.env.npm_package_version = require('../package.json').version;
+  about.loadFile(path.join(__dirname, 'about.html'), {
+    query: {
+      settings: JSON.stringify(settings),
+      commit: appCommit,
+      version: appVersion
+    }
+  });
 
-  // Load the HTML file
-  about.loadFile(path.join(__dirname, 'about.html'));
-
-  // Adjust height to content and show window
-  about.webContents.once('dom-ready', () => {
-    // Set icon path - use the icon directly as it's already a full path
-    const iconPath = 'file://' + icon.replace(/\\/g, '/');
-
-    // Calculate content height and set icon
-    about.webContents
-      .executeJavaScript(
-        `
-      // Sets icon
-      const logo = document.querySelector('.app-logo');
-      if (logo) logo.src = '${iconPath}';
-      
-      // Return height of content for window sizing
-      const container = document.querySelector('.container');
-      container ? container.scrollHeight + 60 : 400;
-    `
-      )
-      .then((height: number) => {
-        // Constrain height to reasonable bounds
-        const finalHeight = Math.min(Math.max(height, 350), 600);
-
-        // Platform-specific sizing
-        if (process.platform === 'win32') {
-          about.setContentSize(400, finalHeight);
-        } else {
-          about.setSize(400, finalHeight);
-        }
-
-        about.center();
-        about.show();
-      })
-      .catch(() => {
-        // Fallback if calculation fails
-        if (process.platform === 'win32') {
-          about.setContentSize(400, 400);
-        } else {
-          about.setSize(400, 400);
-        }
-        about.center();
-        about.show();
-      });
+  about.once('ready-to-show', () => {
+    about.center();
+    about.show();
   });
 
   return about;

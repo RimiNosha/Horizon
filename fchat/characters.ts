@@ -1,8 +1,10 @@
 import core from '../chat/core';
+import { EventMessage } from '../chat/common';
 import { methods } from '../site/character_page/data_store';
-import { decodeHTML } from './common';
+import { decodeHTML, emptyMap } from './common';
 import { Character as Interfaces, Connection } from './interfaces';
 import { Character as CharacterProfile } from '../site/character_page/interfaces';
+import { ProfileCache } from '../learn/profile-cache';
 import Vue from 'vue';
 
 class Character implements Interfaces.Character {
@@ -17,10 +19,20 @@ class Character implements Interfaces.Character {
   overrides: CharacterOverrides = {};
   previousStatusText = '';
 
-  constructor(public name: string) {}
+  constructor(public name: string) {
+    Vue.observable(this.overrides);
+  }
 
   hasStatusTextChanged(): boolean {
     return this.previousStatusText !== this.statusText;
+  }
+}
+
+function removeAllFromList(list: Character[], character: Character): void {
+  let index = list.indexOf(character);
+  while (index !== -1) {
+    list.splice(index, 1);
+    index = list.indexOf(character, index);
   }
 }
 
@@ -48,7 +60,7 @@ export enum CharacterColor {
 }
 
 class State implements Interfaces.State {
-  characters: { [key: string]: Character | undefined } = {};
+  characters: { [key: string]: Character | undefined } = emptyMap();
 
   ownCharacter: Character = <any>undefined; /*tslint:disable-line:no-any*/ //hack
   ownProfile: CharacterProfile = <any>undefined; /*tslint:disable-line:no-any*/ //hack
@@ -67,8 +79,8 @@ class State implements Interfaces.State {
     let char = this.characters[key];
     if (char === undefined) {
       char = new Character(name);
-      char.isFriend = this.friendList.indexOf(name) !== -1;
-      char.isBookmarked = this.bookmarkList.indexOf(name) !== -1;
+      char.isFriend = this.friendList.some(f => f.toLowerCase() === key);
+      char.isBookmarked = this.bookmarkList.some(b => b.toLowerCase() === key);
       char.isChatOp = this.opList.indexOf(name) !== -1;
       char.isIgnored = this.ignoreList.indexOf(key) !== -1;
       this.characters[key] = char;
@@ -82,24 +94,21 @@ class State implements Interfaces.State {
     text: string
   ): void {
     if (character.status === 'offline' && status !== 'offline') {
-      if (character.isFriend) this.friends.push(character);
-      if (character.isBookmarked) this.bookmarks.push(character);
+      if (character.isFriend && this.friends.indexOf(character) === -1)
+        this.friends.push(character);
+      if (character.isBookmarked && this.bookmarks.indexOf(character) === -1)
+        this.bookmarks.push(character);
       if (this.characterFriendList.indexOf(character.name) !== -1) {
+        character.isCharacterFriend = true;
         if (this.characterFriends.indexOf(character) === -1) {
           this.characterFriends.push(character);
         }
       }
     } else if (status === 'offline' && character.status !== 'offline') {
-      if (character.isFriend)
-        this.friends.splice(this.friends.indexOf(character), 1);
-      if (character.isBookmarked)
-        this.bookmarks.splice(this.bookmarks.indexOf(character), 1);
-      if (this.characterFriendList.indexOf(character.name) !== -1) {
-        const index = this.characterFriends.indexOf(character);
-        if (index !== -1) {
-          this.characterFriends.splice(index, 1);
-        }
-      }
+      // Remove unconditionally so stale entries can't linger after logoff
+      removeAllFromList(this.friends, character);
+      removeAllFromList(this.bookmarks, character);
+      removeAllFromList(this.characterFriends, character);
     }
     character.status = status;
     character.statusText = decodeHTML(text);
@@ -182,9 +191,11 @@ export default function (this: void, connection: Connection): Interfaces.State {
       };
     for (const key in state.characters) {
       const character = state.characters[key]!;
-      character.isFriend = state.friendList.indexOf(character.name) !== -1;
-      character.isBookmarked =
-        state.bookmarkList.indexOf(character.name) !== -1;
+      character.isFriend = state.friendList.some(f => f.toLowerCase() === key);
+      character.isBookmarked = state.bookmarkList.some(
+        b => b.toLowerCase() === key
+      );
+      character.isCharacterFriend = false;
       character.status = 'offline';
       character.statusText = '';
     }
@@ -259,6 +270,21 @@ export default function (this: void, connection: Connection): Interfaces.State {
 
       // tslint:disable-next-line no-unnecessary-type-assertion
       core.cache.setProfile(state.ownProfile as CharacterProfile);
+
+      await core.cache.profileCache.register(state.ownProfile as any);
+
+      core.cache.profileCache.updateOverrides(state.ownProfile as any);
+
+      const hqPortraitUrl = ProfileCache.extractHighQualityPortraitURL(
+        state.ownProfile.character.description
+      );
+      if (hqPortraitUrl && ProfileCache.isImgurURL(hqPortraitUrl)) {
+        core.conversations.consoleTab.addMessage(
+          new EventMessage(
+            '[color=red][b]Warning:[/b][/color] [i]Your high-quality portrait uses Imgur, which is no longer supported[/i]. [b]We suggest you move your Imgur portrait to F-List itself[/b], but other hosts are also supported (freeimage.host, e621.net, iili.io, imgchest.com, toyhou.se, or redgifs.com.) Once imgur is removed from your profile, this warning will not appear after login.'
+          )
+        );
+      }
     }
 
     character.name = data.identity;
@@ -284,7 +310,6 @@ export default function (this: void, connection: Connection): Interfaces.State {
     char.isChatOp = false;
   });
   connection.onMessage('RTB', async data => {
-    console.log('got rtb:', data);
     if (
       data.type !== 'trackadd' &&
       data.type !== 'trackrem' &&
@@ -298,7 +323,11 @@ export default function (this: void, connection: Connection): Interfaces.State {
       case 'trackadd':
         state.bookmarkList.push(data.name);
         character.isBookmarked = true;
-        if (character.status !== 'offline') state.bookmarks.push(character);
+        if (
+          character.status !== 'offline' &&
+          state.bookmarks.indexOf(character) === -1
+        )
+          state.bookmarks.push(character);
         break;
       case 'trackrem':
         state.bookmarkList.splice(state.bookmarkList.indexOf(data.name), 1);
@@ -307,10 +336,17 @@ export default function (this: void, connection: Connection): Interfaces.State {
           state.bookmarks.splice(state.bookmarks.indexOf(character), 1);
         break;
       case 'friendadd':
-        // Always add to global friends
-        state.friendList.push(data.name);
+        // Always add to global friends (guard against duplicates when multiple characters share a friend)
+        if (state.friendList.indexOf(data.name) === -1) {
+          state.friendList.push(data.name);
+        }
         character.isFriend = true;
-        if (character.status !== 'offline') state.friends.push(character);
+        if (
+          character.status !== 'offline' &&
+          state.friends.indexOf(character) === -1
+        ) {
+          state.friends.push(character);
+        }
 
         // Always update character-specific friends list. This shouldn't add any excessive overhead.
         const friendAddResponse = await connection.queryApi<{
@@ -326,12 +362,14 @@ export default function (this: void, connection: Connection): Interfaces.State {
         // TODO: We may want to alter this in the future for the 'all' list. For now, it's fine.
         if (
           ownName &&
-          state.characterFriendList.indexOf(character.name) !== -1 &&
-          character.status !== 'offline' &&
-          state.characterFriends.indexOf(character) === -1
+          state.characterFriendList.indexOf(character.name) !== -1
         ) {
-          state.characterFriends.push(character);
           character.isCharacterFriend = true;
+          if (
+            character.status !== 'offline' &&
+            state.characterFriends.indexOf(character) === -1
+          )
+            state.characterFriends.push(character);
         }
         break;
       case 'friendremove':
@@ -355,14 +393,11 @@ export default function (this: void, connection: Connection): Interfaces.State {
         // If this character is no longer a friend of our character, remove from characterFriends
         if (
           ownName &&
-          state.characterFriendList.indexOf(character.name) === -1 &&
-          character.status !== 'offline'
+          state.characterFriendList.indexOf(character.name) === -1
         ) {
+          character.isCharacterFriend = false;
           const index = state.characterFriends.indexOf(character);
-          if (index !== -1) {
-            state.characterFriends.splice(index, 1);
-            character.isCharacterFriend = false;
-          }
+          if (index !== -1) state.characterFriends.splice(index, 1);
         }
     }
   });

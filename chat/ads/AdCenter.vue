@@ -11,13 +11,16 @@
     <div class="mb-3 ad-list" v-for="(ad, index) in ads">
       <label :for="'adm-content-' + index" class="control-label"
         >{{ l('admgr.adNumber', index + 1) }}
-        <a v-if="index > 0" @click="moveAdUp(index)" :title="l('admgr.moveUp')"
+        <a
+          v-if="index > 0"
+          @click="moveAdUp(index)"
+          :title="l('action.move.up')"
           ><i class="fa fa-arrow-up"></i
         ></a>
         <a
           v-if="index < ads.length - 1"
           @click="moveAdDown(index)"
-          :title="l('admgr.moveDown')"
+          :title="l('action.move.down')"
           ><i class="fa fa-arrow-down"></i
         ></a>
         <a @click="removeAd(index)" :title="l('admgr.removeAd')"
@@ -54,7 +57,7 @@
             v-model="ad.disabled"
           />
           <label class="form-check-label" :for="'adm-disabled-' + index">
-            {{ l('admgr.disable') }}
+            {{ l('action.disable') }}
           </label>
         </div>
       </label>
@@ -67,7 +70,6 @@
 </template>
 
 <script lang="ts">
-  import { Component } from '@f-list/vue-ts';
   import CustomDialog from '../../components/custom_dialog';
   import Modal from '../../components/Modal.vue';
   import { Conversation } from '../interfaces';
@@ -79,56 +81,58 @@
   import { Ad } from './ad-center';
   import _ from 'lodash';
 
-  @Component({
-    components: { modal: Modal, editor: Editor, tagEditor: InputTag }
-  })
-  export default class AdCenterDialog extends CustomDialog {
-    l = l;
-    setting = Conversation.Setting;
-    ads!: Ad[];
-    core = core;
+  export default CustomDialog.extend({
+    components: { modal: Modal, editor: Editor, tagEditor: InputTag },
+    data() {
+      return {
+        l: l,
+        setting: Conversation.Setting,
+        ads: undefined as any as Ad[],
+        core: core
+      };
+    },
+    methods: {
+      load(): void {
+        this.ads = _.cloneDeep(core.adCenter.get());
 
-    load(): void {
-      this.ads = _.cloneDeep(core.adCenter.get());
+        if (this.ads.length === 0) {
+          this.addAd();
+        }
+      },
+      async submit(): Promise<void> {
+        await core.adCenter.set(this.ads);
+        const parent = this.$parent as Vue | null;
+        const refObj =
+          parent &&
+          (parent.$refs['adLauncher'] as
+            | InstanceType<typeof CustomDialog>
+            | undefined);
+        if (refObj && typeof refObj.show === 'function') refObj.show();
+      },
+      addAd(): void {
+        this.ads.push({
+          content: '',
+          disabled: false,
+          tags: []
+        });
+      },
+      removeAd(index: number): void {
+        if (Dialog.confirmDialog(l('admgr.confirmRemoveAd'))) {
+          this.ads.splice(index, 1);
+        }
+      },
+      moveAdUp(index: number): void {
+        const ad = this.ads.splice(index, 1);
 
-      if (this.ads.length === 0) {
-        this.addAd();
+        this.ads.splice(index - 1, 0, ad[0]);
+      },
+      moveAdDown(index: number): void {
+        const ad = this.ads.splice(index, 1);
+
+        this.ads.splice(index + 1, 0, ad[0]);
       }
     }
-
-    async submit(): Promise<void> {
-      await core.adCenter.set(this.ads);
-      const parent = this.$parent as Vue | null;
-      const refObj = parent && (parent.$refs['adLauncher'] as any);
-      if (refObj && typeof refObj.show === 'function') refObj.show();
-    }
-
-    addAd(): void {
-      this.ads.push({
-        content: '',
-        disabled: false,
-        tags: []
-      });
-    }
-
-    removeAd(index: number): void {
-      if (Dialog.confirmDialog(l('admgr.confirmRemoveAd'))) {
-        this.ads.splice(index, 1);
-      }
-    }
-
-    moveAdUp(index: number): void {
-      const ad = this.ads.splice(index, 1);
-
-      this.ads.splice(index - 1, 0, ad[0]);
-    }
-
-    moveAdDown(index: number): void {
-      const ad = this.ads.splice(index, 1);
-
-      this.ads.splice(index + 1, 0, ad[0]);
-    }
-  }
+  });
 </script>
 
 <style lang="scss">

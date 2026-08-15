@@ -389,11 +389,13 @@ export enum Species {
   Alien = 281,
   Dinosaur = 610,
   Pokemon = 504,
+  Digimon = 503,
   Fae = 612,
   Taur = 68,
   Vampire = 182,
   Naga = 619,
   Monster = 483,
+  Plant = 249,
 
   Minotaur = 12121212,
   Giraffe = 13131313,
@@ -421,10 +423,12 @@ export const nonAnthroSpecies = [
   Species.Robot,
   Species.Alien,
   Species.Pokemon,
+  Species.Digimon,
   Species.Fae,
   Species.Vampire,
   Species.Monster,
-  Species.Hub
+  Species.Hub,
+  Species.Plant
 ];
 
 export const mammalSpecies = [
@@ -477,7 +481,8 @@ export const speciesNames: SpeciesStrMap = {
   [Species.Fish]: 'fishes',
   [Species.Mephitidae]: 'mephitis',
   [Species.Rhinoceros]: 'rhinoceros',
-  [Species.Suidae]: 'swine'
+  [Species.Suidae]: 'swine',
+  [Species.Plant]: 'plants'
 };
 
 const humanLikeNekoSpecies = [
@@ -595,7 +600,6 @@ export const likelyHuman: SpeciesMap = {
     'astartes',
     'saiyan',
     'echani',
-    'cathar',
     'shikaisen',
     'hyur',
     'mid[ -]?lander',
@@ -640,9 +644,7 @@ export const speciesMapping: SpeciesMap = {
 
   [Species.Elf]: [
     'drow',
-    'draenei',
     'dunmer',
-    'draenai',
     'blutelf[e]?',
     'elf.*',
     'drow.*',
@@ -688,7 +690,6 @@ export const speciesMapping: SpeciesMap = {
     'canid',
     'chihuahua',
     'poodle',
-    'chinchilla',
     'chow[ -]?chow',
     'corgi',
     'anubis',
@@ -734,7 +735,6 @@ export const speciesMapping: SpeciesMap = {
     'hell[ -]?hound',
     'hound',
     'kangal',
-    'behemoth',
     'mongrel',
     'fenrir',
     'v[aá]na[r]?gand[r]?',
@@ -761,7 +761,6 @@ export const speciesMapping: SpeciesMap = {
     'donkey',
     'stallion',
     'mare',
-    'filly',
     'equine',
     'unicorn.*',
     'clydesdale',
@@ -883,6 +882,7 @@ export const speciesMapping: SpeciesMap = {
     'kater',
     'kat',
     'jinko',
+    'cathar',
     '.*katze?',
     'liger',
     'tigon',
@@ -900,7 +900,6 @@ export const speciesMapping: SpeciesMap = {
     'vixen',
     'vulpine',
     'fox.*',
-    'fennec',
     'kitsune.*',
     'kistune',
     'gumiho',
@@ -988,14 +987,15 @@ export const speciesMapping: SpeciesMap = {
     '🐍'
   ],
 
+  //TODO: convert full list of Pokemon from Bulbapedia into a sorted (by dex number) array, with potential mispellings (like "Gardevior" or "Feraligator") taken into consideration
   [Species.Pokemon]: [
     'charizard',
     'charmander',
     'pikachu',
-    'digimon',
-    'renamon',
     'eevee',
     'gardev(oi|io)r',
+    'ralts',
+    'gallade',
     'absol',
     'aggron',
     'jolteon',
@@ -1008,15 +1008,17 @@ export const speciesMapping: SpeciesMap = {
     'mudsdale',
     'mewtwo',
     'glaceon',
-    'pokemon',
+    'pok(e|é)mon (?!trainer|coordinator|breeder)',
     'croconaw',
+    'feraligato?r',
+    'cor(ph|f)ish',
+    'crawdaunt',
     'rattata',
     'toxtricity',
     'audino',
     'sandslash',
     'luxray',
     'samurott',
-    'pokémon',
     'riolu',
     'greninja',
     'meowstick',
@@ -1026,6 +1028,7 @@ export const speciesMapping: SpeciesMap = {
     'zebstrika',
     'rapidash',
     'umbreon',
+    'espeon',
     'litten',
     'vulpix',
     'groudon',
@@ -1090,11 +1093,45 @@ export const speciesMapping: SpeciesMap = {
     'charmeleon',
     'lapras',
     'hatteren[ea]',
+    'aurorus',
+    'machamp',
+    //lest we accidentally label anyone with the word "hypnosis" as a Pokemon
+    '^hypno$',
+    'meowscarada',
+    'nickit',
+    'poochyena',
+    'delphox'
+  ],
 
-    // digimon
+  [Species.Digimon]: [
+    'digimon',
+    'sparrowmon',
     'gatomon',
     'impmon',
-    'guilmon'
+    'guilmon',
+    'renamon',
+    'greymon',
+    'numemon',
+    'sukamon',
+    'agumon',
+    'gabumon',
+    'patamon',
+    'veemon',
+    'terriermon',
+    'angemon',
+    'angewomon',
+    'wargreymon',
+    'omni?mon',
+    'omegamon',
+    'sakuyamon',
+    'gallantmon',
+    'flamedramon',
+    'leomon',
+    'beelzemon',
+    'lilithmon',
+    'ladydevimon',
+    'gaomon',
+    'digi[ -]?mon'
   ],
 
   [Species.Amphibian]: [
@@ -1103,7 +1140,13 @@ export const speciesMapping: SpeciesMap = {
     'toad',
     'newt',
     'amphibian',
-    'axolotl'
+    'axolotl',
+    'tree[ -]?frog',
+    'poison[ -]?dart[ -]?frog',
+    'bullfrog',
+    'caecilian',
+    'tadpole',
+    '🐸'
   ],
 
   [Species.Avian]: [
@@ -1114,7 +1157,6 @@ export const speciesMapping: SpeciesMap = {
     'cockatiel',
     'ph(oe|eo)nix',
     'roc',
-    'chimera',
     'avian',
     'albatross',
     'dove',
@@ -1141,10 +1183,27 @@ export const speciesMapping: SpeciesMap = {
     'chicken',
     'rooster',
     'blauhäher',
-    'gryphon',
     'gr[iy]ff[io]n',
     'parrot',
     'avarr?ian',
+    'hawk',
+    'falcon',
+    'sparrow',
+    'vulture',
+    'goose',
+    'pigeon',
+    'crane',
+    'heron',
+    'pelican',
+    'cockatrice',
+    'thunderbird',
+    'kestrel',
+    'condor',
+    'stork',
+    'magpie',
+    'puffin',
+    'budg(ie|erigar)',
+    'peahen',
     gen('(bird|raven)'),
     'maran',
     '🦚',
@@ -1157,7 +1216,17 @@ export const speciesMapping: SpeciesMap = {
     '🦩'
   ],
 
-  [Species.Bat]: ['bat', 'nimbat', 'foxbat', 'pteropus', '🦇'],
+  [Species.Bat]: [
+    'bat',
+    'nimbat',
+    'foxbat',
+    'pteropus',
+    'fruit[ -]?bat',
+    'flying[ -]?fox',
+    'vampire[ -]?bat',
+    'chiroptera',
+    '🦇'
+  ],
 
   [Species.Bovine]: [
     'cow',
@@ -1167,7 +1236,6 @@ export const speciesMapping: SpeciesMap = {
     'gazelle',
     'oryx',
     'buffalo',
-    'bison',
     'black[ -]?angus',
     'bull',
     'ox',
@@ -1175,11 +1243,7 @@ export const speciesMapping: SpeciesMap = {
     'moo',
     'cattle',
     'hucow',
-    'caprin[a]?e',
-    'goat[ -]?antelope',
     'muskox',
-    'urial',
-    'mouflon',
     'taurine',
     'aurochs',
     'bos',
@@ -1187,8 +1251,7 @@ export const speciesMapping: SpeciesMap = {
     'taur[u|o]s',
     '🐃',
     '🐂',
-    '🐄',
-    '🐐'
+    '🐄'
   ],
 
   [Species.Caprinae]: [
@@ -1205,6 +1268,11 @@ export const speciesMapping: SpeciesMap = {
     'faunus',
     'goat.*',
     'sheepie',
+    'caprin[a]?e',
+    'goat[ -]?antelope',
+    'urial',
+    'mouflon',
+    '🐐',
     gen('(sheep|goat|ram)')
   ],
 
@@ -1257,7 +1325,8 @@ export const speciesMapping: SpeciesMap = {
     'mammoth',
     'mastodon',
     'pachyderm',
-    'tusker'
+    'tusker',
+    '🐘'
   ],
 
   [Species.Fish]: [
@@ -1274,7 +1343,27 @@ export const speciesMapping: SpeciesMap = {
     '.*shark',
     gen('(shark|fish)'),
     '(angel|tiger|bull|whale|white|leopard|crocodile|goblin|zebra) ?shark',
-    'mako'
+    'mako',
+    'octopus',
+    'squid',
+    'cephalopod',
+    'ray',
+    'stingray',
+    'manta',
+    'piranha',
+    'koi',
+    'seahorse',
+    'sea[ -]?horse',
+    'anglerfish',
+    'puffer[ -]?fish',
+    'jelly[ -]?fish',
+    'catfish',
+    'barracuda',
+    'carp',
+    'trout',
+    'clown[ -]?fish',
+    '🐙',
+    '🦑'
   ],
 
   [Species.Giraffe]: ['giraffe', '🦒', 'okapi', '[gk]ira(ff|hv)[ei]?'],
@@ -1296,9 +1385,7 @@ export const speciesMapping: SpeciesMap = {
     'foxcoon',
     'drazelle',
     'vulpkanin',
-    'poochyena',
     'batpon',
-    'delphox',
     'unifox',
     'rooram',
     'catbat',
@@ -1320,6 +1407,17 @@ export const speciesMapping: SpeciesMap = {
     'moth',
     'bumblebee',
     'tolype',
+
+    'centipede',
+    'millipede',
+    'beetle',
+    'cricket',
+    'grasshopper',
+    'butterfly',
+    'dragonfly',
+    'firefly',
+    'cockroach',
+    'caterpillar',
 
     // technically belong to their own group
     'tarantula',
@@ -1361,7 +1459,13 @@ export const speciesMapping: SpeciesMap = {
     'whale',
     'dolphin',
     'orca',
+    'narwhal',
+    'porpoise',
+    'beluga',
+    'manatee',
+    'dugong',
     '🐬',
+    '🐳',
     'killer[ -]?whale'
   ],
 
@@ -1404,12 +1508,26 @@ export const speciesMapping: SpeciesMap = {
     'musteline',
     'badger',
     'ottsel',
+    'sable',
+    'ermine',
+    'polecat',
+    'honey[ -]?badger',
+    'fisher',
     gen('(otter|ferret|weasel)'),
     '🦡',
     '🦦'
   ],
 
-  [Species.Pinniped]: ['seal', 'walrus', 'fur seal', 'sea[ -]?lion'],
+  [Species.Pinniped]: [
+    'seal',
+    'walrus',
+    'fur seal',
+    'sea[ -]?lion',
+    'selkie',
+    'harp[ -]?seal',
+    'elephant[ -]?seal',
+    'leopard[ -]?seal'
+  ],
 
   [Species.Primate]: [
     'gorilla',
@@ -1421,6 +1539,13 @@ export const speciesMapping: SpeciesMap = {
     'chimpanzee',
     'silverback',
     'primate',
+    'orangutan',
+    'baboon',
+    'mandrill',
+    'macaque',
+    'gibbon',
+    'marmoset',
+    'capuchin',
     '🐒',
     '🦍',
     '🦧'
@@ -1432,6 +1557,9 @@ export const speciesMapping: SpeciesMap = {
     'longtail',
     'procyon',
     'tanuki',
+    'coati',
+    'kinkajou',
+    'cacomistle',
     '🦝',
     'racoon',
     'ring[ -]?tail(ed)?'
@@ -1457,6 +1585,17 @@ export const speciesMapping: SpeciesMap = {
     'burmecian',
     'porcupine',
     'squirril',
+    'capybara',
+    'beaver',
+    'guinea[ -]?pig',
+    'chinchilla',
+    'dormouse',
+    'prairie[ -]?dog',
+    'groundhog',
+    'marmot',
+    'degu',
+    'agouti',
+    '🦫',
     gen('(rat|mousi?ey?|maus|squirrel)'),
     '🐀',
     '🐁',
@@ -1493,7 +1632,11 @@ export const speciesMapping: SpeciesMap = {
     'polar[ -]?bear',
     'ursine',
     'pandaren',
-    'ursus'
+    'ursus',
+    'sun[ -]?bear',
+    'kodiak',
+    'cave[ -]?bear',
+    '🐻'
   ],
 
   // pangolin doesn't fit here
@@ -1503,7 +1646,6 @@ export const speciesMapping: SpeciesMap = {
     'sloth',
     'glyptodont',
     'a(rm|mr)ad[iy]ll?o',
-    'sloth',
     'ant[ -]?eater',
     'pangoo?lin'
   ],
@@ -1557,7 +1699,12 @@ export const speciesMapping: SpeciesMap = {
     'fey',
     'pixie',
     'nymph',
-    'faerie'
+    'faerie',
+    'sprite',
+    'sylph',
+    'leprechaun',
+    'sidhe',
+    'spriggan'
   ],
 
   [Species.Humanoid]: [
@@ -1577,8 +1724,16 @@ export const speciesMapping: SpeciesMap = {
     'dryad',
     'homunculus',
     'githyanki',
+    'githzerai',
     'tiefling',
-    'aasimar'
+    'aasimar',
+    'genasi',
+    'firbolg',
+    'goliath',
+    'hobbit',
+    'au[ -]?ra',
+    'roegadyn',
+    'hasph(et|etica|eteem)'
   ],
 
   [Species.Minotaur]: [
@@ -1632,10 +1787,30 @@ export const speciesMapping: SpeciesMap = {
     'kirin',
     'qilin',
     'olog[ -]?hai',
-    'owlbear'
+    'owlbear',
+    'chimera',
+    'wendigo',
+    'cerberus',
+    'hydra',
+    'sphinx',
+    'cyclops',
+    'medusa',
+    'gorgon',
+    'wraith',
+    'banshee',
+    'revenant',
+    'wight',
+    'shade',
+    'spect(er|re)',
+    'doppel[ -]?g[aä]nger',
+    'mind[ -]?flayer',
+    'merman',
+    'merfolk',
+    'mer[ -]?person',
+    'behemoth'
   ],
 
-  [Species.Naga]: ['naga', 'lamia'],
+  [Species.Naga]: ['naga', 'lamia', 'coatl', 'quetzalcoatl'],
   [Species.Taur]: [
     'centaur',
     'chakat',
@@ -1698,6 +1873,7 @@ export const speciesMapping: SpeciesMap = {
     'gungan',
     'chiss',
     'alien',
+    'draen[ae]i',
     'puazi',
     'hutt',
     'klyntar',
@@ -1706,7 +1882,22 @@ export const speciesMapping: SpeciesMap = {
     'salarian',
     "t[']?vaoan",
     'yautja',
-    'zabrak'
+    'zabrak',
+    'drell',
+    'batarian',
+    'geth',
+    'hanar',
+    'elcor',
+    'volus',
+    'vorcha',
+    'protoss',
+    'zerg',
+    'klingon',
+    'vulcan',
+    'romulan',
+    'cardassian',
+    'bajoran',
+    'betazoid'
   ],
 
   [Species.Robot]: [
@@ -1734,6 +1925,35 @@ export const speciesMapping: SpeciesMap = {
     'flexible',
     'any',
     'partner preference'
+  ],
+
+  [Species.Plant]: [
+    'floran',
+    'fungus',
+    'fungi',
+    'mushroom',
+    'vine',
+    'flower',
+    'moss',
+    'fern',
+    'cactus',
+    'succulent',
+    'sprout',
+    'seedling',
+    'mycelium',
+    'spore',
+    'vegetable',
+    'vegetal',
+    'chlorophyll',
+    'living[ -]?wood',
+    'wood[ -]?sprite',
+    'nature[ -]?spirit',
+    '🪴',
+    '🌱',
+    '🌻',
+    '🍄',
+    '🍄‍🟫',
+    gen('(plant|flora|dryad|treant|myconid)')
   ]
 };
 

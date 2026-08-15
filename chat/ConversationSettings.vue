@@ -19,24 +19,29 @@
           </div>
         </div>
         <settings-radio
-          v-model="notify"
+          :value="notify"
+          @input="notify = $event"
           :name="'notify' + conversation.key"
           :id="'notify' + conversation.key"
         ></settings-radio>
       </div>
-      <div class="d-flex p-2 justify-content-between align-items-start">
+      <div
+        v-if="isChannel"
+        class="d-flex p-2 justify-content-between align-items-start"
+      >
         <div class="w-50">
           <label class="control-label" :for="'highlight' + conversation.key">{{
             l('settings.highlight')
           }}</label>
         </div>
         <settings-radio
-          v-model="highlight"
+          :value="highlight"
+          @input="highlight = $event"
           :name="'highlight' + conversation.key"
         ></settings-radio>
       </div>
     </div>
-    <div class="mb-3">
+    <div v-if="isChannel" class="mb-3">
       <div class="d-flex p-2 justify-content-between align-items-start">
         <div class="w-50">
           <label
@@ -57,7 +62,7 @@
         ></settings-checkbox>
       </div>
     </div>
-    <div class="mb-3 p-2">
+    <div v-if="isChannel" class="mb-3 p-2">
       <label class="control-label" :for="'highlightWords' + conversation.key">{{
         l('settings.highlightWords')
       }}</label>
@@ -67,7 +72,7 @@
         v-model="highlightWords"
       />
     </div>
-    <div class="mb-3 p-2">
+    <div v-if="isChannel" class="mb-3 p-2">
       <label class="control-label" :for="'highlightUsers' + conversation.key">{{
         l('settings.highlightUsers.conversation')
       }}</label>
@@ -94,7 +99,10 @@
           :name="'muted' + conversation.key"
         ></settings-checkbox>
       </div>
-      <div class="d-flex p-2 justify-content-between align-items-start">
+      <div
+        v-if="isChannel"
+        class="d-flex p-2 justify-content-between align-items-start"
+      >
         <div class="w-50">
           <label
             class="control-label"
@@ -103,7 +111,8 @@
           >
         </div>
         <settings-radio
-          v-model="joinMessages"
+          :value="joinMessages"
+          @input="joinMessages = $event"
           :name="'joinMessages' + conversation.key"
         ></settings-radio>
       </div>
@@ -116,7 +125,8 @@
           >
         </div>
         <settings-radio
-          v-model="logMessages"
+          :value="logMessages"
+          @input="logMessages = $event"
           :name="'logMessages' + conversation.key"
         ></settings-radio>
       </div>
@@ -125,7 +135,6 @@
 </template>
 
 <script lang="ts">
-  import { Component, Prop } from '@f-list/vue-ts';
   import CustomDialog from '../components/custom_dialog';
   import SettingsRadio from '../components/SettingsRadio.vue';
   import SettingsCheckbox from '../components/SettingsCheckbox.vue';
@@ -133,58 +142,66 @@
   import { Conversation } from './interfaces';
   import l from './localize';
 
-  @Component({
+  export default CustomDialog.extend({
     components: {
       modal: Modal,
       'settings-radio': SettingsRadio,
       'settings-checkbox': SettingsCheckbox
-    }
-  })
-  export default class ConversationSettings extends CustomDialog {
-    @Prop({ required: true })
-    readonly conversation!: Conversation;
-    l = l;
-    setting = Conversation.Setting;
-    notify!: Conversation.Setting;
-    highlight!: Conversation.Setting;
-    highlightWords!: string;
-    horizonHighlightUsers!: string;
-    joinMessages!: Conversation.Setting;
-    defaultHighlights!: boolean;
-    logMessages!: Conversation.Setting;
-    muted!: boolean;
-
-    load(): void {
-      const settings = this.conversation.settings;
-      this.notify = settings.notify;
-      this.highlight = settings.highlight;
-      this.highlightWords = settings.highlightWords.join(',');
-      this.joinMessages = settings.joinMessages;
-      this.defaultHighlights = settings.defaultHighlights;
-      this.horizonHighlightUsers = settings.horizonHighlightUsers.join(',');
-      this.logMessages = settings.logMessages;
-      this.muted = settings.muted;
-    }
-
-    submit(): void {
-      this.conversation.settings = {
-        notify: this.notify,
-        highlight: this.highlight,
-        highlightWords: this.highlightWords
-          .split(',')
-          .map(x => x.trim())
-          .filter(x => x.length > 0),
-        horizonHighlightUsers: this.horizonHighlightUsers
-          .split(',')
-          .map(x => x.trim())
-          .filter(x => x.length > 0),
-
-        joinMessages: this.joinMessages,
-        defaultHighlights: this.defaultHighlights,
-        adSettings: this.conversation.settings.adSettings,
-        logMessages: this.logMessages,
-        muted: this.muted
+    },
+    props: {
+      conversation: { type: Object as () => Conversation, required: true }
+    },
+    data() {
+      return {
+        l: l,
+        setting: Conversation.Setting,
+        notify: Conversation.Setting.Default,
+        highlight: Conversation.Setting.Default,
+        highlightWords: '',
+        horizonHighlightUsers: '',
+        joinMessages: Conversation.Setting.Default,
+        defaultHighlights: true,
+        logMessages: Conversation.Setting.Default,
+        muted: false
       };
+    },
+    computed: {
+      isChannel(): boolean {
+        return Conversation.isChannel(this.conversation);
+      }
+    },
+    methods: {
+      load(): void {
+        const settings = this.conversation.settings;
+        this.notify = settings.notify;
+        this.highlight = settings.highlight;
+        this.highlightWords = settings.highlightWords.join(',');
+        this.joinMessages = settings.joinMessages;
+        this.defaultHighlights = settings.defaultHighlights;
+        this.horizonHighlightUsers = settings.horizonHighlightUsers.join(',');
+        this.logMessages = settings.logMessages;
+        this.muted = settings.muted;
+      },
+      submit(): void {
+        this.conversation.settings = {
+          notify: this.notify,
+          highlight: this.highlight,
+          highlightWords: this.highlightWords
+            .split(',')
+            .map(x => x.trim())
+            .filter(x => x.length > 0),
+          horizonHighlightUsers: this.horizonHighlightUsers
+            .split(',')
+            .map(x => x.trim())
+            .filter(x => x.length > 0),
+
+          joinMessages: this.joinMessages,
+          defaultHighlights: this.defaultHighlights,
+          adSettings: this.conversation.settings.adSettings,
+          logMessages: this.logMessages,
+          muted: this.muted
+        };
+      }
     }
-  }
+  });
 </script>

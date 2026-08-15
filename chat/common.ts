@@ -8,8 +8,15 @@ import {
 } from './interfaces';
 import core from './core';
 
+export function normalizeCharacterName(
+  this: any | never,
+  character: string
+): string {
+  return character.replace(/[\r\n]/g, '');
+}
+
 export function profileLink(this: any | never, character: string): string {
-  return `https://www.f-list.net/c/${character}`;
+  return `https://www.f-list.net/c/${normalizeCharacterName(character)}`;
 }
 
 /**
@@ -23,20 +30,37 @@ export async function FisherYatesShuffle(arr: any[]): Promise<void> {
   }
 }
 
+/**
+ * Retrieves the avatar image URL for a given character.
+ *
+ * @param character - The name of the character to get the image for
+ * @param useOriginalAvatar - Whether to use the original F-List avatar instead of any custom override if applicable (defaults to false).
+ * @returns The URL string pointing to the character's avatar image
+ */
 export function characterImage(
   this: any | never,
   character: string,
   useOriginalAvatar: boolean = false
 ): string {
-  const c = core.characters.get(character);
+  const normalizedCharacter = normalizeCharacterName(character);
+  const c = core.characters.get(normalizedCharacter);
 
   if (c.overrides.avatarUrl && !useOriginalAvatar) {
     return c.overrides.avatarUrl;
   }
 
-  return `https://static.f-list.net/images/avatar/${character.toLowerCase()}.png`;
+  return `https://static.f-list.net/images/avatar/${normalizedCharacter.toLowerCase()}.png`;
 }
 
+/**
+ * Calculates the UTF-8 byte length of a string.
+ *
+ * This function computes the number of bytes required to encode a string in UTF-8,
+ * taking into account surrogate pair ligatures and multi-byte characters.
+ *
+ * @param str - The string for which to calculate the byte length
+ * @returns The total number of bytes required to represent the string in UTF-8 encoding
+ */
 export function getByteLength(this: any | never, str: string): number {
   let byteLen = 0;
   for (let i = 0; i < str.length; i++) {
@@ -117,6 +141,7 @@ export class Settings implements ISettings {
 
   chatLayoutMode: 'classic' | 'modern' = 'classic';
   messageGrouping = true;
+  forceQuickConvoList = false;
 
   horizonCacheDraftMessages = true;
   horizonSaveDraftMessagesToDiskTimer = 60;
@@ -153,6 +178,8 @@ export class Settings implements ISettings {
       intersex: false,
       male: false,
       microMacro: false,
+      noFurries: false,
+      noHumans: false,
       obesity: false,
       pokemon: false,
       pregnancy: false,
@@ -197,6 +224,17 @@ export class ConversationSettings implements Conversation.Settings {
   muted = false;
 }
 
+/**
+ * Formats a date into a time string with optional date component.
+ *
+ * @param date - The date to format
+ * @param noDate - If true, only the time portion is returned regardless of the date. Defaults to false.
+ * @returns A formatted time string. If `noDate` is true or the date is today, returns only the time.
+ *          Otherwise, returns the full date and time in 'yyyy-MM-dd' format followed by the time.
+ *          The time format depends on user settingsv (`use12HourTime` and `showSeconds`):
+ *          - 12-hour format with optional seconds (hh:mm:ss a or hh:mm a)
+ *          - 24-hour format with optional seconds (HH:mm:ss or HH:mm)
+ */
 export function formatTime(
   this: any | never,
   date: Date,
@@ -228,6 +266,14 @@ export function formatTime(
   return format(date, absoluteFormat);
 }
 
+/**
+ * Converts a conversation message to a formatted string representation. Takes message type (ie 'action', 'event') into account for formatting the initial part of the string.
+ * @param msg - The {@link Conversation.Message} to convert to a string
+ * @param timeFormatter - Optional function to format the message timestamp. Defaults to {@link formatTime}.
+ * @param characterTransform - Optional function to transform the sender's name. Defaults to no transformation.
+ * @param textTransform - Optional function to transform the message text. Defaults to no transformation.
+ * @returns A formatted string containing the timestamp, sender information, and message text, terminated with `\r\n`
+ */
 export function messageToString(
   this: any | never,
   msg: Conversation.Message,
