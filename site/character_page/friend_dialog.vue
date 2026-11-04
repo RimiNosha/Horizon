@@ -1,6 +1,6 @@
 <template>
   <Modal
-    :action="l('friends.titleFor', name)"
+    :action="l('friends.titleFor', { character: name })"
     :buttons="false"
     dialog-class="modal-dialog-centered modal-lg"
     iconClass="fas fa-user-group"
@@ -173,7 +173,7 @@
               target: (this as any).character.character,
               createdAt: Date.now() / 1000
             });
-          else this.existing.push(newRequest);
+          else this.pending.push(newRequest);
         } catch (e) {
           if (Utils.isJSONError(e)) this.error = <string>e.response.data.error;
           Utils.ajaxError(e, 'Unable to send friend request');
@@ -183,7 +183,7 @@
       async dissolve(friendship: Friend): Promise<void> {
         if (
           Dialog.confirmDialog(
-            l('friends.remove.confirm', friendship.target.name)
+            l('friends.remove.confirm', { character: friendship.target.name })
           )
         ) {
           try {

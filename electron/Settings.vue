@@ -427,18 +427,16 @@
                         <div>{{ currentSoundThemeDetails.description }}</div>
                         <div v-if="currentSoundThemeDetails.author">
                           {{
-                            l(
-                              'settings.soundTheme.by',
-                              currentSoundThemeDetails.author
-                            )
+                            l('settings.soundTheme.by', {
+                              name: currentSoundThemeDetails.author
+                            })
                           }}
                         </div>
                         <div class="small">
                           {{
-                            l(
-                              'settings.soundTheme.version',
-                              currentSoundThemeDetails.version
-                            )
+                            l('settings.soundTheme.version', {
+                              version: currentSoundThemeDetails.version
+                            })
                           }}
                         </div>
                       </div>
@@ -735,10 +733,9 @@
                         class="btn btn-outline-secondary"
                         @click="openLogDir()"
                         :title="
-                          l(
-                            'platform.open',
-                            l(`platform.fileExplorer.${platformName}`)
-                          )
+                          l('platform.open', {
+                            name: l(`platform.fileExplorer.${platformName}`)
+                          })
                         "
                       >
                         <span class="far fa-fw fa-folder-open"></span>
@@ -759,8 +756,11 @@
                           `https://horizn.moe/docs/guides/backup.html`
                         )
                       "
-                      ><span>{{ `${l('settings.logDir.note')} ` }}</span>
-                      <i class="fa-solid fa-arrow-up-right-from-square"></i>.
+                      ><localized-text k="settings.logDir.guide">
+                        <template #icon>
+                          <i class="fa-solid fa-arrow-up-right-from-square"></i>
+                        </template>
+                      </localized-text>
                     </a>
                   </div>
                 </div>
@@ -806,10 +806,9 @@
                       for="forceNativeWindowControls"
                     >
                       {{
-                        l(
-                          'settings.experimental',
-                          l('settings.forceNativeWindowControls')
-                        )
+                        l('settings.experimental', {
+                          name: l('settings.forceNativeWindowControls')
+                        })
                       }}
                     </label>
                   </div>
@@ -1060,8 +1059,31 @@
                     </p>
                   </small>
                 </label>
+
+                <div class="mb-3" v-if="!isMac">
+                  <label class="control-label" for="alwaysOpenIncognito">
+                    <div class="form-check">
+                      <input
+                        class="form-check-input"
+                        type="checkbox"
+                        id="alwaysOpenIncognito"
+                        v-model="settings.horizonAlwaysOpenIncognito"
+                      />
+                      <label class="form-check-label" for="alwaysOpenIncognito">
+                        {{ l('settings.alwaysOpenIncognito') }}
+                      </label>
+                    </div>
+                    <small class="form-text text-muted">{{
+                      l('settings.alwaysOpenIncognito.help')
+                    }}</small>
+                  </label>
+                </div>
                 <h5>
-                  {{ l('settings.experimental', l('settings.customCss')) }}
+                  {{
+                    l('settings.experimental', {
+                      name: l('settings.customCss')
+                    })
+                  }}
                 </h5>
 
                 <div class="mb-3">
@@ -1092,10 +1114,9 @@
                       />
                       <label class="form-check-label" for="windowTransparency">
                         {{
-                          l(
-                            'settings.experimental',
-                            l('settings.customCss.transparency')
-                          )
+                          l('settings.experimental', {
+                            name: l('settings.customCss.transparency')
+                          })
                         }}
                       </label>
                     </div>
@@ -1154,6 +1175,7 @@
   import * as remote from '@electron/remote';
   import Vue from 'vue';
   import l, { setLanguage, availableDisplayLanguages } from '../chat/localize';
+  import LocalizedText from '../components/localized_text';
   import { GeneralSettings } from './common';
   import fs from 'fs';
   import path from 'path';
@@ -1172,7 +1194,11 @@
   const browserWindow = remote.getCurrentWindow();
 
   export default Vue.extend({
-    components: { tabs: Tabs, 'filterable-select': FilterableSelect },
+    components: {
+      tabs: Tabs,
+      'filterable-select': FilterableSelect,
+      'localized-text': LocalizedText
+    },
     data() {
       return {
         sortedLangs: [] as string[],
@@ -1528,7 +1554,10 @@
           properties: ['openDirectory']
         });
         if (dir !== undefined) {
-          if (dir[0].startsWith(path.dirname(remote.app.getPath('exe'))))
+          if (
+            dir[0].startsWith(path.dirname(remote.app.getPath('exe'))) &&
+            !dir[0].startsWith(remote.app.getPath('userData'))
+          )
             return remote.dialog.showErrorBox(
               l('settings.logDir'),
               l('settings.logDir.inAppDir')
@@ -1536,7 +1565,10 @@
 
           if (
             Dialog.confirmDialog(
-              l('settings.logDir.confirm', dir[0], this.settings.logDirectory)
+              l('settings.logDir.confirm', {
+                newDir: dir[0],
+                currentDir: this.settings.logDirectory
+              })
             )
           ) {
             ipcRenderer.send('log-path-update', dir[0]);

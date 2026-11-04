@@ -3,7 +3,7 @@
     <div class="quick-jump-overlay" @click="hide">
       <div class="quick-jump-container bg-light" @click.stop>
         <div class="quick-jump-header">
-          <span class="fas fa-shuffle"></span>
+          <span class="fas fa-up-down"></span>
           <span>{{ l('quickJump.title') }}</span>
         </div>
         <input
@@ -64,7 +64,7 @@
               <span class="fas fa-plus"></span>
             </span>
             <span class="result-name">{{
-              l('quickJump.openNewConversation', searchQuery)
+              l('quickJump.openNewConversation', { character: searchQuery })
             }}</span>
           </div>
         </div>
@@ -80,7 +80,7 @@
   import core from './core';
   import { Conversation } from './interfaces';
   import { Keys } from '../keys';
-  import l from './localize';
+  import l, { lp } from './localize';
 
   interface SearchResult {
     key: string;
@@ -168,7 +168,7 @@
             name: conversation.name,
             type: 'channel',
             conversation,
-            description: l(
+            description: lp(
               'quickJump.members',
               conversation.channel.sortedMembers.length
             )

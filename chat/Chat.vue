@@ -20,7 +20,7 @@
         class="card-header"
         style="margin-top: 0; display: flex; align-items: center"
       >
-        {{ l('title') }}
+        {{ l(titleKey) }}
         <div
           style="
             margin-left: auto;
@@ -293,7 +293,10 @@
         connected: false,
         l: l,
         copyPlain: false,
-        filterText: ''
+        filterText: '',
+        titleKey: (process.env.NODE_ENV === 'production'
+          ? 'title'
+          : 'title.dev') as 'title' | 'title.dev'
       };
     },
     computed: {
@@ -452,20 +455,21 @@
         this.connecting = false;
         this.connected = true;
         core.notifications.playSound('login');
-        document.title = l('title.connected', core.connection.character);
+        document.title = l('title.connected', {
+          character: core.connection.character
+        });
 
         // tslint:disable-next-line:no-floating-promises
         core.siteSession.onConnectionEstablished();
       });
       core.watch(
-        () => core.conversations.hasNew,
-        hasNew => {
+        () => core.conversations.newCount,
+        newCount => {
           document.title =
-            (hasNew ? '💬 ' : '') +
-            l(
-              core.connection.isOpen ? 'title.connected' : 'title',
-              core.connection.character
-            );
+            (newCount ? '💬 ' : '') +
+            l(core.connection.isOpen ? 'title.connected' : 'title', {
+              character: core.connection.character
+            });
         }
       );
       core.connection.onError(e => {
@@ -476,10 +480,10 @@
 
         if ((<Error & { request?: object }>e).request !== undefined) {
           //catch axios network errors
-          this.error = l('login.connectError', errorToString(e));
+          this.error = l('login.connectError', { error: errorToString(e) });
           this.connecting = false;
         } else {
-          this.error = l('events.error', errorToString(e));
+          this.error = l('events.error', { error: errorToString(e) });
           throw e;
         }
       });

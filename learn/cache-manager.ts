@@ -8,6 +8,7 @@ import {
   SelectConversationEvent
 } from '../chat/preview/event-bus';
 import { Channel, Conversation } from '../chat/interfaces';
+import { requiresProfileMatching } from '../chat/common';
 import { methods } from '../site/character_page/data_store';
 import { Character as ComplexCharacter } from '../site/character_page/interfaces';
 import { AdCache } from './ad-cache';
@@ -116,7 +117,7 @@ export class CacheManager {
     skipCacheCheck: boolean = false,
     channelId?: string
   ): Promise<void> {
-    if (!core.state.settings.risingAdScore) {
+    if (!requiresProfileMatching(core.state.settings)) {
       return;
     }
 
@@ -142,8 +143,17 @@ export class CacheManager {
 
     const key = ProfileCache.nameKey(name);
 
-    if (!!_.find(this.queue, (q: ProfileCacheQueueEntry) => q.key === key))
+    const existing = _.find(
+      this.queue,
+      (q: ProfileCacheQueueEntry) => q.key === key
+    );
+
+    // retag to the newest channel so a channel switch doesn't drop someone the
+    // new channel just asked for. untagged entries stay untagged
+    if (existing) {
+      if (existing.channelId) existing.channelId = channelId;
       return;
+    }
 
     const entry: ProfileCacheQueueEntry = {
       name,
@@ -244,38 +254,20 @@ export class CacheManager {
    *
    * But under what scenarios do we actually need to process without fetching?
    * @param character Character name to fetch, or a character object to finish
-   * @param fromDiskOnly If true, only attempt to load from disk cache; do not fetch from server
-   * @param deleteAfterFetch If true, delete the profile from cache immediately after fetching
    * Comment imported from Frolic; may be inaccurate if significant changes occured.
+
+   * trimmed significantly with the userlist viertualization changes. fromDiskOnly
+   * caused every profile to reregister no matter what, introducing extra work.
+   * applyOverridesFromStore does the same job without reregistering. 
    */
   async addProfile(
     character: string | ComplexCharacter,
-    fromDiskOnly: boolean = false,
-    deleteAfterFetch: boolean = false
+    channelId?: string
   ): Promise<void> {
     if (typeof character === 'string') {
       // console.log('Learn discover', character);
 
-      if (fromDiskOnly) {
-        const diskChar = await this.profileCache.get(character);
-        if (deleteAfterFetch && diskChar) {
-          this.profileCache.delete(character);
-        }
-        return;
-      }
-      await this.queueForFetching(character);
-      if (deleteAfterFetch) {
-        // Wait until fetched, then delete
-        const checkAndDelete = async () => {
-          const p = await this.profileCache.get(character);
-          if (p) {
-            this.profileCache.delete(character);
-          } else {
-            setTimeout(checkAndDelete, 1000);
-          }
-        };
-        await checkAndDelete();
-      }
+      await this.queueForFetching(character, false, channelId);
       return;
     }
 
@@ -323,9 +315,17 @@ export class CacheManager {
   }
 
   calculateScore(e: ProfileCacheQueueEntry): number {
-    return this.characterProfiler
-      ? this.characterProfiler.calculateInterestScoreForQueueEntry(e)
-      : 0;
+    // adds FIFO ranking so that older calculation attempts are prioritized
+    const ageBonus = (Date.now() - e.added.getTime()) / 10000;
+
+    // if ad colorization is off, just check for filtering by FIFO
+    if (!core.state.settings.risingAdScore || !this.characterProfiler) {
+      return ageBonus;
+    }
+
+    return (
+      this.characterProfiler.calculateInterestScoreForQueueEntry(e) + ageBonus
+    );
   }
 
   async start(settings: GeneralSettings, skipFlush: boolean): Promise<void> {
@@ -694,6 +694,29 @@ export class CacheManager {
         });
       }
     );
+  }
+
+  // refreshes the filtered and matching status for any profiles that were no longer in memory
+  // should help cases where your filters changed in a way that'd change their match status
+  async rematchStaleAdsInConversations(): Promise<void> {
+    const ownName = core.characters.ownCharacter.name;
+    const seen = new Set<string>();
+
+    for (const conv of core.conversations.channelConversations) {
+      for (const m of conv.messages) {
+        if (m.type !== Message.Type.Ad || !m.sender) continue;
+
+        const name = m.sender.name;
+        if (name === ownName || seen.has(name)) continue;
+        seen.add(name);
+
+        if (this.profileCache.getSync(name)) continue;
+
+        // loads profile from disk store, then recalculates filter status
+        const p = await this.resolveProfileScore(false, m.sender, conv, m);
+        if (!p) await this.queueForFetching(name, false, conv.channel.id);
+      }
+    }
   }
 
   async stop(): Promise<void> {

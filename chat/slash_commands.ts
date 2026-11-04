@@ -1,6 +1,6 @@
 import core from './core';
 import { Character, Conversation, userStatuses } from './interfaces';
-import l from './localize';
+import l, { LocaleKey } from './localize';
 import ChannelConversation = Conversation.ChannelConversation;
 import PrivateConversation = Conversation.PrivateConversation;
 
@@ -26,6 +26,22 @@ export function isWarn(this: void, text: string): boolean {
 
 export function isCommand(this: void, text: string): boolean {
   return text.charAt(0) === '/' && !isAction(text) && !isWarn(text);
+}
+
+// leading spaces followed by a command e.g. ' /me waves'
+// does not handle newlines before commands, since that's probably intended by the user
+const indentedCommand = /^[^\S\r\n]+\/([a-z]+)\b/i;
+
+// names the command the text was probably meant to be, so send() can warn about it
+// only matches real commands, since ' /shrug' is not one and is meant to be sent as-is
+export function indentedCommandName(
+  this: void,
+  text: string
+): string | undefined {
+  const match = indentedCommand.exec(text);
+  if (match === null) return undefined;
+  const name = match[1].toLowerCase();
+  return commands[name] !== undefined ? name : undefined;
 }
 
 export function parse(
@@ -83,21 +99,24 @@ export function parse(
             );
             if (matchedOption) values[i] = matchedOption;
             else
-              return l(
-                'commands.invalidParam',
-                l(`commands.${name}.param${i}`)
-              );
+              return l('commands.invalidParam', {
+                param: l(`commands.${name}.param${i}` as LocaleKey)
+              });
           } else if (
             (param.options !== undefined ? param.options : []).indexOf(
               value
             ) === -1
           )
-            return l('commands.invalidParam', l(`commands.${name}.param${i}`));
+            return l('commands.invalidParam', {
+              param: l(`commands.${name}.param${i}` as LocaleKey)
+            });
           break;
         case ParamType.Number:
           const num = parseInt(value, 10);
           if (isNaN(num))
-            return l('commands.invalidParam', l(`commands.${name}.param${i}`));
+            return l('commands.invalidParam', {
+              param: l(`commands.${name}.param${i}` as LocaleKey)
+            });
           values[i] = num;
           break;
         case ParamType.Character:
@@ -202,6 +221,14 @@ const commands: { readonly [key: string]: Command | undefined } = {
       if (dice.toLocaleLowerCase().includes('inf')) {
         conv.infoText =
           'Inf took many lives during its reign. Thankfully, you have been spared.';
+        return;
+      } else if (dice.toLocaleLowerCase().includes('nan')) {
+        core.connection.close();
+        core.connection.throwError(
+          new Error(
+            '"Yes, I\'d like NaN apples." They have played us for absolute fools.'
+          )
+        );
         return;
       } else if (Conversation.isChannel(conv))
         core.connection.send('RLL', { channel: conv.channel.id, dice });
@@ -338,10 +365,9 @@ const commands: { readonly [key: string]: Command | undefined } = {
   },
   ignorelist: {
     exec: (conv: Conversation) =>
-      (conv.infoText = l(
-        'chat.ignoreList',
-        core.characters.ignoreList.join(', ')
-      ))
+      (conv.infoText = l('chat.ignoreList', {
+        characters: core.characters.ignoreList.join(', ')
+      }))
   },
   makeroom: {
     exec: (_, channel: string) => core.connection.send('CCR', { channel }),

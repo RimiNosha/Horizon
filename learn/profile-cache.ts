@@ -266,6 +266,55 @@ export class ProfileCache extends AsyncCache<CharacterCacheRecord> {
     return cacheRecord;
   }
 
+  /**
+   * Applies a profile's character overrides (HQ portrait, custom name color).
+   *
+   * Skips register on purpose. Registering runs the matcher, which costs performance
+   * per profile, and the member list calls this once per member. Nothing here needs
+   * a match score, so don't add one.
+   *
+   * Does nothing if the profile isn't on disk
+   * @param name Character to apply overrides for
+   */
+  async applyOverridesFromStore(name: string): Promise<void> {
+    const profile =
+      this.getSync(name)?.character ??
+      (await this.store?.getProfile(name))?.profileData;
+
+    if (profile) {
+      this.updateOverrides(profile);
+    }
+  }
+
+  /**
+   * Tests a stored profile against the smart filters without scoring it.
+   *
+   * Same reasoning as applyOverridesFromStore. matchesSmartFilters is cheap, but
+   * register is not, so don't go through it just to get a verdict. Reads the cache
+   * directly instead of via getSync so a bulk scan doesn't reorder the LRU
+   *
+   * @param name Character to test
+   * @returns whether they're filtered, or null if there's no profile to judge
+   */
+  async isFilteredFromStore(name: string): Promise<boolean | null> {
+    const cached = this.cache[AsyncCache.nameKey(name)];
+
+    if (cached) {
+      return cached.match.isFiltered;
+    }
+
+    const profile = (await this.store?.getProfile(name))?.profileData;
+
+    if (!profile) {
+      return null;
+    }
+
+    return matchesSmartFilters(
+      profile.character,
+      core.state.settings.risingFilter
+    );
+  }
+
   delete(name: string): void {
     const key = AsyncCache.nameKey(name);
 
@@ -363,11 +412,10 @@ export class ProfileCache extends AsyncCache<CharacterCacheRecord> {
     return false;
   }
 
+  // The HQ portrait URL is always extracted and stored regardless of the
+  // risingShowHighQualityPortraits setting; whether it is shown is decided at
+  // render time (characterImage) so toggling the setting applies live.
   static extractHighQualityPortraitURL(description: string): string | null {
-    if (!core.state.settings.risingShowHighQualityPortraits) {
-      return null;
-    }
-
     // * We should check for both:
     //  [url=https://some.domain.ext/path/to/image.png]Horizon Portrait[/url]
     //  [url=https://some.domain.ext/path/to/image.png]Rising Portrait[/url]
@@ -400,7 +448,7 @@ export class ProfileCache extends AsyncCache<CharacterCacheRecord> {
   }
 
   updateOverrides(c: ComplexCharacter): void {
-    const avatarUrl = ProfileCache.extractHighQualityPortraitURL(
+    let avatarUrl = ProfileCache.extractHighQualityPortraitURL(
       c.character.description
     );
 
@@ -408,26 +456,34 @@ export class ProfileCache extends AsyncCache<CharacterCacheRecord> {
       c.character.description
     );
 
-    if (avatarUrl) {
-      if (!ProfileCache.isSafeRisingPortraitURL(avatarUrl)) {
-        log.info('portrait.hq.invalid.domain', { name, url: avatarUrl });
-      } else {
-        if (c.character.name === core.characters.ownCharacter.name) {
-          const parent =
-            remote.getCurrentWindow() ||
-            remote.BrowserWindow.getAllWindows()[0];
-          if (parent) {
-            parent.webContents.send(
-              'update-avatar-url',
-              c.character.name,
-              avatarUrl
-            );
-          }
-        }
+    if (avatarUrl && !ProfileCache.isSafeRisingPortraitURL(avatarUrl)) {
+      log.info('portrait.hq.invalid.domain', {
+        name: c.character.name,
+        url: avatarUrl
+      });
+      avatarUrl = null;
+    }
 
-        log.info('portrait.hq.url', { name: c.character.name, url: avatarUrl });
-        core.characters.setOverride(c.character.name, 'avatarUrl', avatarUrl);
+    if (avatarUrl) {
+      if (
+        c.character.name === core.characters.ownCharacter.name &&
+        core.state.settings.risingShowHighQualityPortraits
+      ) {
+        const parent =
+          remote.getCurrentWindow() || remote.BrowserWindow.getAllWindows()[0];
+        if (parent) {
+          parent.webContents.send(
+            'update-avatar-url',
+            c.character.name,
+            avatarUrl
+          );
+        }
       }
+
+      log.info('portrait.hq.url', { name: c.character.name, url: avatarUrl });
+      core.characters.setOverride(c.character.name, 'avatarUrl', avatarUrl);
+    } else {
+      core.characters.setOverride(c.character.name, 'avatarUrl', undefined);
     }
 
     if (characterColor) {
