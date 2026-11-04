@@ -187,9 +187,9 @@ export class CharacterAnalysis {
 
     this.age = Matcher.age(c);
 
-    this.isAnthro = Matcher.isAnthro(c);
-    this.isHuman = Matcher.isHuman(c);
-    this.isMammal = Matcher.isMammal(c);
+    this.isAnthro = false; //Matcher.isAnthro(c);
+    this.isHuman = true; //Matcher.isHuman(c);
+    this.isMammal = false; //Matcher.isMammal(c);
   }
 }
 
@@ -1355,15 +1355,34 @@ export class Matcher {
   }
 
   static isMammal(c: Character): boolean | null {
-    return false;
+    const species = Matcher.species(c);
+
+    if (species === null) return null;
+
+    return mammalSpecies.indexOf(species) >= 0;
   }
 
   static isAnthro(c: Character): boolean | null {
-    return false;
+    const bodyTypeId = Matcher.getTagValueList(TagId.BodyType, c);
+
+    if (bodyTypeId === BodyType.Human) return false;
+    if (bodyTypeId === BodyType.Anthro) return true;
+
+    const speciesId = Matcher.species(c);
+
+    if (!speciesId) return null;
+
+    return nonAnthroSpecies.indexOf(speciesId) < 0;
   }
 
   static isHuman(c: Character): boolean | null {
-    return true;
+    const bodyTypeId = Matcher.getTagValueList(TagId.BodyType, c);
+
+    if (bodyTypeId === BodyType.Human) return true;
+
+    const speciesId = Matcher.species(c);
+
+    return speciesId === Species.Human;
   }
 
   static species(c: Character): Species | null {
