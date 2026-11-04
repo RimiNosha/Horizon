@@ -28,6 +28,13 @@ export namespace Conversation {
 
     score: number;
     filterMatch: boolean;
+
+    /**
+     * Set when the same character already posted identical text in the same
+     * channel. Only used for ads; the message stays in the conversation and on
+     * disk, it is simply hidden from the view.
+     */
+    isDuplicate: boolean;
   }
 
   export interface EventMessage extends BaseMessage {
@@ -267,6 +274,7 @@ export namespace Settings {
     statusPins: string[];
     searchHistory: (ExtendedSearchData | SearchData)[];
     hideNonMatchingAds: boolean;
+    hideDuplicateAds: boolean;
     hideProfileComparisonSummary: boolean;
     hideProfileAnalysis: boolean;
     ads: Ad[];

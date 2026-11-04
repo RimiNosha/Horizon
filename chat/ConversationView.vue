@@ -198,6 +198,14 @@
             >
               {{ l('admgr.showIncompatibleAds') }}
             </button>
+            <button
+              class="dropdown-item"
+              :class="{ selected: showDuplicateAds }"
+              type="button"
+              @click="toggleDuplicateAds()"
+            >
+              {{ l('admgr.showDuplicateAds') }}
+            </button>
 
             <template v-slot:split>
               <a class="btn btn-secondary" @click="toggleAutoPostAds()">
@@ -603,6 +611,7 @@
         isChannel: Conversation.isChannel,
         isPrivate: Conversation.isPrivate,
         showNonMatchingAds: true,
+        showDuplicateAds: false,
         userMemo: '',
         editorMemo: '',
         memoManager: undefined as MemoManager | undefined,
@@ -697,6 +706,10 @@
 
       this.showNonMatchingAds =
         !(await core.settingsStore.get('hideNonMatchingAds'));
+      // Repeated ads are hidden unless the user explicitly turned the hiding off.
+      this.showDuplicateAds =
+        (await core.settingsStore.get('hideDuplicateAds')) === false;
+      core.cache.duplicateAdsHidden = !this.showDuplicateAds;
     },
     mounted(): void {
       this.updateOwnName();
@@ -990,6 +1003,16 @@
         );
       },
 
+      async toggleDuplicateAds(): Promise<void> {
+        this.showDuplicateAds = !this.showDuplicateAds;
+        core.cache.duplicateAdsHidden = !this.showDuplicateAds;
+
+        await core.settingsStore.set(
+          'hideDuplicateAds',
+          !this.showDuplicateAds
+        );
+      },
+
       /* tslint:disable */
       getMessageWrapperClasses(): any {
         const filter = core.state.settings.risingFilter;
@@ -1010,6 +1033,7 @@
 
         classes['messages-' + conv.mode] = true;
         classes['hide-non-matching'] = !this.showNonMatchingAds;
+        classes['hide-duplicate-ads'] = !this.showDuplicateAds;
 
         classes['filter-ads'] = filter.hideAds;
         classes['filter-channel-messages'] =
@@ -1463,6 +1487,12 @@
 
   .messages.filter-ads {
     .message.filter-match.message-ad {
+      display: none;
+    }
+  }
+
+  .messages.hide-duplicate-ads {
+    .message.message-ad.duplicate-ad {
       display: none;
     }
   }

@@ -334,6 +334,7 @@ export class Message implements Conversation.ChatMessage {
 
   score = 0;
   filterMatch = false;
+  isDuplicate = false;
 
   constructor(
     readonly type: Conversation.Message.Type,
@@ -352,6 +353,7 @@ export class EventMessage implements Conversation.EventMessage {
 
   readonly score = 0;
   filterMatch = false;
+  readonly isDuplicate = false;
 
   constructor(
     readonly text: string,
@@ -365,6 +367,7 @@ export class BroadcastMessage implements Conversation.BcastMessage {
 
   readonly score = 0;
   filterMatch = false;
+  readonly isDuplicate = false;
 
   constructor(
     readonly text: string,
