@@ -465,6 +465,45 @@ export function getDrafts(): any {
   }
 }
 
+/**
+ * Gets the file path for the shared ad-poster grid cache. It lives at the root
+ * of the log directory (not under a character folder) so the same ads carry
+ * over across characters and app restarts.
+ * @function
+ */
+function getAdGridFile(this: void): string {
+  const dir = core.state.generalSettings!.logDirectory;
+  fs.mkdirSync(dir, { recursive: true });
+  return path.join(dir, '!ad-grid.json');
+}
+
+/**
+ * Reads the persisted ad-poster grid cache, or null when missing/unreadable.
+ * @function
+ * @internal
+ */
+export function getAdGrid(): any {
+  const file = getAdGridFile();
+  if (!fs.existsSync(file)) return null;
+
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (e) {
+    console.error(`Error encountered when parsing ad grid from ${file}: ${e}`);
+    return null;
+  }
+}
+
+/**
+ * Overwrites the shared ad-poster grid cache file with the serialized cache.
+ * @function
+ * @param {any} grid The full grid cache object to dump as raw JSON.
+ * @internal
+ */
+export function saveAdGrid(grid: any): void {
+  writeFile(getAdGridFile(), JSON.stringify(grid));
+}
+
 //tslint:disable-next-line:no-async-without-await
 /**
  * Directly fetch the draft file location (located in the log folder for the character) and fully overwrite it with the new cache data.

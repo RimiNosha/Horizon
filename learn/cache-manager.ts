@@ -13,6 +13,7 @@ import { methods } from '../site/character_page/data_store';
 import { Character as ComplexCharacter } from '../site/character_page/interfaces';
 import { AdCache } from './ad-cache';
 import { DuplicateAdCache } from './ad-dedup-cache';
+import { AdGridCache, GridAdPosting } from './ad-grid-cache';
 import { ChannelConversationCache } from './channel-conversation-cache';
 import { CharacterProfiler } from './character-profiler';
 import { CharacterCacheRecord, ProfileCache } from './profile-cache';
@@ -27,6 +28,7 @@ import { emptyMap } from '../fchat/common';
 import Bluebird from 'bluebird';
 import ChatMessage = Conversation.ChatMessage;
 import { GeneralSettings } from '../electron/common';
+import { getAdGrid, saveAdGrid } from '../electron/filesystem';
 import { Gender } from './matcher-types';
 import { WorkerStore } from './store/worker';
 import { PermanentIndexedStore } from './store/types';
@@ -66,6 +68,13 @@ export class CacheManager {
    */
   duplicateAdCache: DuplicateAdCache = new DuplicateAdCache();
 
+  /**
+   * Per-channel record of the newest ad each character posted, used to fill the
+   * ad posters grid with ads that are no longer in the visible message list.
+   * Keyed by channel id; postings older than six hours are cleaned up.
+   */
+  adGridCache: AdGridCache = new AdGridCache();
+
   conversationDraftCache: ConversationDraftCache = new ConversationDraftCache();
 
   protected queue: ProfileCacheQueueEntry[] = [];
@@ -76,6 +85,14 @@ export class CacheManager {
   protected profileStore?: PermanentIndexedStore;
 
   protected lastPost: Date = new Date();
+
+  /**
+   * @constant
+   * Minimum wait between disk writes of the ad-poster grid.
+   */
+  static readonly AD_GRID_SAVE_DELAY = 3000;
+
+  private adGridSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
   protected lastFetch = Date.now();
 
@@ -113,14 +130,97 @@ export class CacheManager {
   duplicateAdsHidden = true;
 
   /**
-   * Records an ad under its channel and flags the message when the same
-   * character had already posted identical text in that channel.
-   *
-   * Ads posted by us are always kept visible, and messages that are not ads are
-   * left untouched.
+   * Records an ad for the posters grid, keeping only the newest posting per
+   * character. Messages that are not ads are left untouched.
    * @param channelId Channel the ad was posted in.
-   * @param message Message to test and flag.
+   * @param message The ad message.
    */
+  recordAdForGrid(channelId: string, message: Conversation.Message): void {
+    if (message.type !== Message.Type.Ad || !message.sender) return;
+
+    const posting: GridAdPosting = {
+      channelId,
+      name: message.sender.name,
+      message: message.text,
+      time: message.time
+    };
+
+    this.adGridCache.register(posting);
+    this.queueAdGridSave();
+  }
+
+  /**
+   * Records ads from a backlog of messages for the posters grid.
+   * @param channelId Channel the messages were posted in.
+   * @param messages Backlog messages in chronological order.
+   */
+  recordAdsForGrid(
+    channelId: string,
+    messages: ReadonlyArray<Conversation.Message>
+  ): void {
+    for (const message of messages) this.recordAdForGrid(channelId, message);
+  }
+
+  /**
+   * Forgets the recorded posters of a channel.
+   * @param channelId Channel to forget.
+   */
+  forgetAdGrid(channelId: string): void {
+    this.adGridCache.deregister(channelId);
+  }
+
+  /**
+   * Forgets every recorded poster. Called when the connection drops, since the
+   * channel conversations are torn down and their grids get refilled from the
+   * backlog on the next connect.
+   */
+  resetAdGrid(): void {
+    this.adGridCache.reset();
+    void this.saveAdGrid();
+  }
+
+  /**
+   * Loads the persisted ad-poster grid from disk into the cache. Safe to call
+   * before a connection is established; the shared file is not character-scoped.
+   * @internal
+   */
+  loadAdGrid(): void {
+    this.adGridCache.load(getAdGrid());
+  }
+
+  /**
+   * Writes the ad-poster grid to the shared file. Coalesced so a burst of ads
+   * does not hammer the disk.
+   * @internal
+   */
+  queueAdGridSave(): void {
+    if (this.adGridSaveTimer !== null) return;
+
+    this.adGridSaveTimer = setTimeout(() => {
+      this.adGridSaveTimer = null;
+      void this.saveAdGrid();
+    }, CacheManager.AD_GRID_SAVE_DELAY);
+  }
+
+  /**
+   * Flushes the ad-poster grid to disk immediately.
+   * @internal
+   */
+  async saveAdGrid(): Promise<void> {
+    if (this.adGridSaveTimer !== null) {
+      clearTimeout(this.adGridSaveTimer);
+      this.adGridSaveTimer = null;
+    }
+
+    const serialized = this.adGridCache.serialize();
+
+    // ^ Never overwrite the shared file with an empty grid, so a cold start
+    // (whose stop() runs before the persisted grid is loaded) cannot wipe it.
+    if (Object.keys(serialized).length === 0) return;
+
+    saveAdGrid(serialized);
+  }
+
   markAdDuplicate(channelId: string, message: Conversation.Message): void {
     if (message.type !== Message.Type.Ad || !message.sender) return;
     if (message.sender.name === core.connection.character) return;
@@ -417,6 +517,8 @@ export class CacheManager {
     if (!skipFlush) {
       await this.profileStore.flushProfiles(settings.risingCacheExpiryDays);
     }
+
+    this.loadAdGrid();
 
     this.hasStarted = true;
 
@@ -805,6 +907,8 @@ export class CacheManager {
     if (this.profileStore) {
       await this.profileStore.stop();
     }
+
+    void this.saveAdGrid();
 
     this.hasStarted = false;
 

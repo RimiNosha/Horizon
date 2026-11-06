@@ -531,6 +531,7 @@ class ChannelConversation
     // Backlog arrives oldest first, so marking in order keeps the earliest copy
     // of a repeated ad visible.
     core.cache.markAdDuplicates(this.channel.id, messages);
+    core.cache.recordAdsForGrid(this.channel.id, messages);
 
     this.both.unshift(...messages);
     this.chat.unshift(...this.both.filter(x => x.type !== MessageType.Ad));
@@ -625,6 +626,7 @@ class ChannelConversation
 
     if (message.type === MessageType.Ad) {
       core.cache.markAdDuplicate(this.channel.id, message);
+      core.cache.recordAdForGrid(this.channel.id, message);
       this.addModeMessage('ads', message);
       await this.logMessage(message, true);
     } else {
@@ -650,6 +652,7 @@ class ChannelConversation
 
   clear(): void {
     core.cache.forgetAdDuplicates(this.channel.id);
+    core.cache.forgetAdGrid(this.channel.id);
     this.messages = [];
     this.chat.length = 0;
     this.ads.length = 0;
@@ -660,6 +663,7 @@ class ChannelConversation
     core.connection.send('LCH', { channel: this.channel.id });
     clearInterval(this.cacheInterval);
     core.cache.forgetAdDuplicates(this.channel.id);
+    core.cache.forgetAdGrid(this.channel.id);
     state.removeFromNavigationHistory(this);
   }
 
@@ -1349,7 +1353,8 @@ export default function (this: any): Interfaces.State {
     state.channelConversations = [];
     state.channelMap = emptyMap();
     // Channel conversations are being torn down; their ad history gets rebuilt
-    // from the backlog as the new conversations open.
+    // from the backlog as the new conversations open. The poster grid is kept
+    // (it is persisted across characters/restarts) rather than reset.
     core.cache.resetAdDuplicates();
     if (!isReconnect) {
       state.consoleTab = new ConsoleConversation();

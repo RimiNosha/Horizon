@@ -140,6 +140,19 @@
         </div>
 
         <div class="btn-toolbar">
+          <div class="btn-group" v-show="isAdsCapable">
+            <button
+              class="btn btn-secondary"
+              :class="{ active: showAdGrid }"
+              :title="l('conversation.adsGrid')"
+              type="button"
+              @click="toggleAdGrid"
+            >
+              <i class="fas fa-th-large"></i>
+              <span class="btn-text">{{ l('conversation.adsGrid') }}</span>
+            </button>
+          </div>
+
           <dropdown
             :keep-open="false"
             :title="l('action.view')"
@@ -314,6 +327,7 @@
       ref="messages"
       @scroll="onMessagesScroll"
       style="flex: 1; overflow: auto; margin-top: 2px"
+      v-show="!showAdGrid"
     >
       <template v-for="(message, i) in messages">
         <message-view
@@ -351,7 +365,78 @@
         </span>
       </template>
     </div>
+    <!-- ^ Characters that posted ads here; their ads are previewed on hover -->
+    <div
+      class="border-top ads-grid hidden-scrollbar"
+      style="flex: 1; overflow: auto; margin-top: 2px"
+      v-show="showAdGrid && isChannel(conversation)"
+    >
+      <template v-if="adPosters.length">
+        <div class="ads-grid-inner">
+          <!-- ^ data-character lets ChatView's global contextmenu handler open
+               the right-click user menu for the tile. -->
+          <div
+            class="ads-grid-tile"
+            :class="[
+              poster.scoreClass ? `score-${poster.scoreClass}` : '',
+              {
+                hovered: hoveredPoster && hoveredPoster.name === poster.name,
+                pinned: pinnedPoster && pinnedPoster.name === poster.name
+              }
+            ]"
+            :data-character="poster.name"
+            data-bs-touch="false"
+            v-for="poster in adPosters"
+            :key="poster.name"
+            @mouseenter="showPosterHover(poster)"
+            @mouseleave="clearPosterHover(poster)"
+            @click.stop="togglePin(poster)"
+          >
+            <img
+              class="ads-grid-avatar"
+              :src="avatarFor(poster.name)"
+              loading="lazy"
+            />
+            <span class="ads-grid-name" :class="poster.colorClass">{{
+              poster.name
+            }}</span>
+            <span
+              class="ads-grid-score"
+              :class="poster.scoreClass ? `score-${poster.scoreClass}` : ''"
+              v-if="poster.scoreLabel"
+              >{{ poster.scoreLabel }}</span
+            >
+          </div>
+        </div>
+      </template>
+      <template v-else>
+        <i>{{ l('conversation.adsGrid.empty') }}</i>
+      </template>
+    </div>
+    <!-- ^ Docked at the bottom of the conversation; hovering previews, clicking
+         pins. Click the pin to unpin. Must be v-if: the body binds activePoster,
+         which is undefined when nothing is hovered/pinned. -->
+    <div class="border-top ads-grid-ad" v-if="showAdGrid && activePoster">
+      <div class="ads-grid-ad-meta">
+        <span class="ads-grid-ad-name">{{ activePoster.name }}</span>
+        <span class="message-time">{{ formatTime(activePoster.time) }}</span>
+        <span
+          class="ads-grid-ad-pin"
+          :class="{ pinned: pinnedPoster }"
+          :title="
+            pinnedPoster
+              ? l('conversation.adsGrid.unpin')
+              : l('conversation.adsGrid.pin')
+          "
+          @click="togglePin(activePoster)"
+        ></span>
+      </div>
+      <div class="ads-grid-ad-body">
+        <bbcode :text="activePoster.text"></bbcode>
+      </div>
+    </div>
     <bbcode-editor
+      v-show="!showAdGrid"
       v-model="conversation.enteredText"
       @keydown="onKeyDown"
       :extras="extraButtons"
@@ -528,10 +613,16 @@
   import {
     characterImage,
     errorToString,
+    formatTime,
     getByteLength,
     getKey
   } from './common';
   import ConversationSettings from './ConversationSettings.vue';
+  import { Score } from '../learn/matcher';
+  import { kinkMatchWeights, Scoring } from '../learn/matcher-types';
+  import { CharacterColor } from '../fchat/characters';
+  import { isFilteredByChatGender } from '../learn/filter/smart-filter';
+  import { hasActiveSmartFilters } from '../learn/filter/types';
   import ConversationAdSettings from './ads/ConversationAdSettings.vue';
   import core from './core';
   import {
@@ -558,6 +649,24 @@
 
   const UIBbcodeParser = new UserInterfaceBBCodeParser();
 
+  // ^ Mirrors UserView.getMatchScoreTitle, keyed on the score class string.
+  function getMatchScoreLabel(scoreClass: string): string {
+    switch (scoreClass) {
+      case 'perfect':
+        return 'Perfect';
+      case 'match':
+        return 'Great';
+      case 'weak-match':
+        return 'Good';
+      case 'weak-mismatch':
+        return 'Maybe';
+      case 'mismatch':
+        return 'No';
+      default:
+        return '';
+    }
+  }
+
   export default Vue.extend({
     components: {
       user: UserView,
@@ -583,6 +692,19 @@
         modes: channelModes,
         descriptionExpanded: false,
         l: l,
+        formatTime: formatTime,
+        // ^ The computed `characterImage` returns the current conversation's
+        // avatar string, so grid tiles use this function alias instead.
+        avatarFor: characterImage,
+        // ^ Swaps the message list for a grid of characters that posted ads
+        showAdGrid: false,
+        hoveredPoster: undefined as
+          | { name: string; text: string; time: Date }
+          | undefined,
+        // ^ Clicking a tile pins its ad to the bottom card until unpinned
+        pinnedPoster: undefined as
+          | { name: string; text: string; time: Date }
+          | undefined,
         extraButtons: [] as EditorButton[],
         getByteLength: getByteLength,
         tabOptions: undefined as string[] | undefined,
@@ -617,12 +739,71 @@
         memoManager: undefined as MemoManager | undefined,
         ownName: undefined as Character | undefined,
         configUpdateHook: undefined as any,
-        memoUpdateHook: undefined as any
+        memoUpdateHook: undefined as any,
+        // ^ Bumped when a profile's score arrives so the ad grid recomputes.
+        scoreTick: 0,
+        scoreTickHook: undefined as any,
+        channelAdHook: undefined as any,
+        // ^ Posters we have already asked the cache to fetch, so a re-render
+        // does not re-queue the same profile every score tick
+        requestedPosters: new Set<string>()
       };
     },
     computed: {
       conversation(): Conversation {
         return core.conversations.selectedConversation;
+      },
+      isAdsCapable(): boolean {
+        return (
+          this.isChannel(this.conversation) &&
+          (this.conversation.channel.mode === 'both' ||
+            this.conversation.channel.mode === 'ads')
+        );
+      },
+      // ^ One tile per character that posted an ad in this channel, oldest ad
+      // first so newer posters append to the end; smart-filtered posters are
+      // hidden when hideChannelMembers is on. The tile carries the matcher score
+      // and gender/offline color so the grid reads like chat.
+      adPosters(): ReadonlyArray<{
+        name: string;
+        text: string;
+        time: Date;
+        scoreClass: string;
+        scoreLabel: string;
+        colorClass: string;
+      }> {
+        if (!this.isChannel(this.conversation)) return [];
+
+        // ^ Touch the tick so the grid recomputes as scores arrive and as new
+        // ads are recorded (older than six hours are pruned by the cache)
+        void this.scoreTick;
+
+        const posters = core.cache.adGridCache.getPosters(
+          this.conversation.channel.id
+        );
+
+        const showScores = core.state.settings.risingAdScore;
+        return posters
+          .filter(
+            poster =>
+              !core.isHidden(poster.name) &&
+              !this.isPosterFilteredByName(poster.name)
+          )
+          .map(poster => {
+            const scoreClass = showScores
+              ? this.getPosterScoreClass(poster.name)
+              : '';
+            return {
+              ...poster,
+              scoreClass,
+              scoreLabel: scoreClass ? getMatchScoreLabel(scoreClass) : '',
+              colorClass: this.getPosterColorClass(poster.name)
+            };
+          });
+      },
+      // ^ The pinned ad wins over the hovered one, so the bottom card stays put.
+      activePoster(): { name: string; text: string; time: Date } | undefined {
+        return this.pinnedPoster ?? this.hoveredPoster;
       },
       shouldShowMarker(): boolean {
         return core.state.settings.horizonShowGenderMarker;
@@ -687,6 +868,9 @@
     watch: {
       conversation: {
         handler: 'conversationChanged'
+      },
+      isAdsCapable(newValue: boolean): void {
+        if (!newValue) this.showAdGrid = false;
       },
       'conversation.messages': {
         handler: 'messageAdded'
@@ -760,6 +944,7 @@
           }
         }) as EventListener)
       );
+
       this.searchTimer = window.setInterval(() => {
         // ignore whitespace-only search
         const committed =
@@ -798,11 +983,30 @@
       );
       this.refreshAutoPostingTimer();
 
-      this.configUpdateHook = () => this.updateOwnName();
+      this.configUpdateHook = () => {
+        this.updateOwnName();
+        // ^ Color settings (offline/gender colors) changed: refresh tile names
+        if (this.showAdGrid) this.scoreTick++;
+      };
       EventBus.$on('configuration-update', this.configUpdateHook);
 
       this.memoUpdateHook = (e: any) => this.refreshMemo(e);
       EventBus.$on('character-memo', this.memoUpdateHook);
+
+      // ^ Recompute tile scores as profiles finish matching while the grid is open
+      this.scoreTickHook = () => {
+        if (this.showAdGrid) this.scoreTick++;
+      };
+      EventBus.$on('character-score', this.scoreTickHook);
+
+      // ^ Refresh the grid as new ads are recorded in the current channel
+      this.channelAdHook = (e: any) => {
+        if (!this.showAdGrid) return;
+        const channelId = _.get(e.channel, 'channel.id');
+        if (channelId === _.get(this.conversation, 'channel.id'))
+          this.scoreTick++;
+      };
+      EventBus.$on('channel-ad', this.channelAdHook);
     },
     destroyed(): void {
       window.removeEventListener('resize', this.resizeHandler);
@@ -814,6 +1018,8 @@
 
       EventBus.$off('configuration-update', this.configUpdateHook);
       EventBus.$off('character-memo', this.memoUpdateHook);
+      EventBus.$off('character-score', this.scoreTickHook);
+      EventBus.$off('channel-ad', this.channelAdHook);
     },
     methods: {
       hideSearch(): void {
@@ -833,6 +1039,10 @@
 
       async conversationChanged(): Promise<void> {
         this.updateOwnName();
+
+        this.showAdGrid = false;
+        this.hoveredPoster = undefined;
+        this.pinnedPoster = undefined;
 
         if (!anyDialogsShown) (<Editor>this.$refs['textBox']).focus();
         this.$nextTick(() =>
@@ -901,6 +1111,9 @@
       },
 
       shouldRedirectTyping(): boolean {
+        // ^ Typing shortcuts are meaningless while the ad grid is open
+        if (this.showAdGrid) return false;
+
         const selection = document.getSelection();
         return (
           (selection === null || selection.isCollapsed) &&
@@ -1072,6 +1285,133 @@
 
       showManage(): void {
         (<ManageChannel>this.$refs['manageDialog']).show();
+      },
+
+      // ^ Mirrors UserList.getFilteredMembers: hide posters the smart filters
+      // match, using the cached verdict or the chat-gender fallback.
+      isPosterFilteredByName(name: string): boolean {
+        const filters = core.state.settings.risingFilter;
+        if (!filters.hideChannelMembers || !hasActiveSmartFilters(filters)) {
+          return false;
+        }
+
+        const cache = core.cache.profileCache.getSync(name);
+        if (cache?.match.isFiltered === true) return true;
+
+        const character = core.characters.get(name);
+        return (
+          character !== undefined && isFilteredByChatGender(character, filters)
+        );
+      },
+
+      // ^ Mirrors UserView.getStatusClasses' name-color logic, including the
+      // disk override resolution so custom colors apply even though the grid
+      // replaces the UserView that would normally trigger it. Reading the
+      // reactive overrides here re-runs adPosters once a color resolves.
+      getPosterColorClass(name: string): string {
+        const character = core.characters.get(name);
+        if (!character) return '';
+
+        const useOfflineColor =
+          core.state.settings.horizonChangeOfflineColor &&
+          character.status === 'offline';
+
+        if (
+          core.cache.hasCacheStarted &&
+          core.state.settings.horizonShowCustomCharacterColors &&
+          character.overrides.characterColor === undefined
+        ) {
+          // ^ Don't check again once we've looked; resolution lands via overrides
+          core.characters.setOverride(name, 'characterColor', null);
+          void core.cache.profileCache.applyOverridesFromStore(name);
+        }
+
+        if (
+          character.overrides.characterColor !== undefined &&
+          !useOfflineColor &&
+          character.overrides.characterColor !== CharacterColor.none
+        ) {
+          return `${CharacterColor[character.overrides.characterColor]}NameText`;
+        }
+
+        const baseGender = character.overrides.gender || character.gender;
+        const gender =
+          baseGender !== undefined && !useOfflineColor
+            ? baseGender.toLowerCase()
+            : 'none';
+
+        return `gender-${gender}`;
+      },
+
+      // ^ Reads the cached match for a poster, mirroring UserView.getStatusClasses.
+      getPosterScoreClass(name: string): string {
+        const channel = this.isChannel(this.conversation)
+          ? this.conversation.channel
+          : undefined;
+        const cache = core.cache.profileCache.getSync(name);
+        if (cache === null && !this.requestedPosters.has(name)) {
+          // ^ Request a poster's profile once; re-renders must not re-queue it
+          this.requestedPosters.add(name);
+          void core.cache.addProfile(name, channel?.id);
+        }
+        if (!cache) return '';
+
+        if (
+          cache.match.searchScore >= kinkMatchWeights.perfectThreshold &&
+          cache.match.matchScore === Scoring.MATCH
+        ) {
+          return 'perfect';
+        }
+        return Score.getClasses(cache.match.matchScore);
+      },
+
+      toggleAdGrid(): void {
+        this.showAdGrid = !this.showAdGrid;
+        this.hoveredPoster = undefined;
+        this.pinnedPoster = undefined;
+        // ^ Force a score recompute whenever the grid is opened
+        this.scoreTick++;
+
+        if (this.showAdGrid) return;
+
+        // ^ Returning to chat: refocus the editor and pin the scroll to bottom
+        if (!anyDialogsShown) (<Editor>this.$refs['textBox']).focus();
+        this.$nextTick(() =>
+          setTimeout(
+            () => (this.messageView.scrollTop = this.messageView.scrollHeight)
+          )
+        );
+        this.scrolledDown = true;
+      },
+
+      showPosterHover(poster: {
+        name: string;
+        text: string;
+        time: Date;
+      }): void {
+        // ^ A pinned ad stays; don't let hovering swap the bottom card.
+        if (this.pinnedPoster) return;
+
+        this.hoveredPoster = poster;
+      },
+
+      clearPosterHover(poster: { name: string }): void {
+        // ^ A pinned ad stays open after the pointer leaves the tile.
+        if (this.pinnedPoster) return;
+
+        // ^ Ignore a stale leave when the pointer already moved to another tile
+        if (this.hoveredPoster?.name === poster.name) {
+          this.hoveredPoster = undefined;
+        }
+      },
+
+      togglePin(poster: { name: string; text: string; time: Date }): void {
+        if (this.pinnedPoster?.name === poster.name) {
+          this.pinnedPoster = undefined;
+        } else {
+          this.pinnedPoster = poster;
+          this.hoveredPoster = undefined;
+        }
       },
 
       showAds(): void {
@@ -1363,6 +1703,180 @@
     padding-top: 1px;
     margin-right: 3px;
     font-size: 80%;
+  }
+
+  #conversation .ads-grid {
+    .ads-grid-inner {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      padding: 6px 2px;
+    }
+
+    .ads-grid-tile {
+      width: 96px;
+      height: 104px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      padding: 6px;
+      border-radius: 8px;
+      cursor: pointer;
+      position: relative;
+      transition:
+        box-shadow 0.08s,
+        transform 0.08s;
+      @media (prefers-reduced-motion: reduce) {
+        transition: none;
+      }
+
+      &:hover,
+      &.hovered {
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+        transform: translateY(-2px);
+      }
+
+      &.pinned {
+        outline: solid 2px var(--bs-warning);
+        outline-offset: -2px;
+
+        &::after {
+          content: '\f08d';
+          font-family: 'Font Awesome 6 Free';
+          font-weight: 900;
+          position: absolute;
+          top: 4px;
+          right: 4px;
+          font-size: 11px;
+          color: var(--bs-warning);
+        }
+      }
+    }
+
+    .ads-grid-avatar {
+      width: 60px;
+      height: 60px;
+      object-fit: contain;
+    }
+
+    .ads-grid-name {
+      font-size: 12px;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      // ^ Mirrors .user-view exactly: a bare var() that drops the declaration
+      // when --gender-color is unset, so custom-color classes (.redNameText etc.)
+      // apply instead of being overridden by a valid fallback value.
+      color: var(--gender-color);
+    }
+
+    .ads-grid-score {
+      font-size: 11px;
+      border-radius: 3px;
+      padding: 1px 4px;
+      line-height: 1;
+    }
+
+    // ^ Follow the matcher colors so the grid reads like the chat itself.
+    .ads-grid-tile.score-perfect {
+      border-left: solid 3px var(--scorePerfectMatchBg);
+      background-color: var(--scoreFadedPerfectMatchBg);
+
+      .ads-grid-score {
+        background-color: var(--scorePerfectMatchBg);
+        color: var(--scorePerfectMatchFg);
+      }
+    }
+
+    .ads-grid-tile.score-match {
+      border-left: solid 3px var(--scoreStandoutMatchBorderColor);
+      background-color: var(--scoreMatchBgFaint);
+
+      .ads-grid-score {
+        background-color: var(--scoreMatchBg);
+        color: var(--scoreMatchFg);
+      }
+    }
+
+    .ads-grid-tile.score-weak-match {
+      border-left: solid 3px var(--scoreStandoutWeakMatchBorderColor);
+      background-color: var(--scoreWeakMatchBgFaint);
+
+      .ads-grid-score {
+        background-color: var(--scoreWeakMatchBg);
+        color: var(--scoreWeakMatchFg);
+      }
+    }
+
+    .ads-grid-tile.score-neutral {
+      border-left: solid 3px var(--scoreStandoutNeutralBorderColor);
+    }
+
+    .ads-grid-tile.score-weak-mismatch {
+      border-left: solid 3px var(--scoreStandoutWeakMismatchBorderColor);
+      background-color: var(--scoreWeakMismatchBgFaint);
+
+      .ads-grid-score {
+        background-color: var(--scoreWeakMismatchBg);
+        color: var(--scoreWeakMismatchFg);
+      }
+    }
+
+    .ads-grid-tile.score-mismatch {
+      border-left: solid 3px var(--scoreStandoutMismatchBorderColor);
+      background-color: var(--scoreMismatchBgFaint);
+
+      .ads-grid-score {
+        background-color: var(--scoreMismatchBg);
+        color: var(--scoreMismatchFg);
+      }
+    }
+  }
+
+  #conversation .ads-grid-ad {
+    flex-shrink: 0;
+    margin-top: 2px;
+    padding: 6px 10px;
+    background: var(--input-bg);
+    color: var(--input-color);
+
+    .ads-grid-ad-meta {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      font-size: 12px;
+      margin-bottom: 4px;
+    }
+
+    .ads-grid-ad-name {
+      font-weight: 600;
+    }
+
+    .ads-grid-ad-pin {
+      cursor: pointer;
+      margin-left: auto;
+
+      &::before {
+        content: '\f08d';
+        font-family: 'Font Awesome 6 Free';
+        font-weight: 400;
+        opacity: 0.5;
+      }
+
+      &.pinned::before {
+        font-weight: 900;
+        opacity: 1;
+        color: var(--bs-warning);
+      }
+    }
+
+    .ads-grid-ad-body {
+      max-height: 160px;
+      overflow: auto;
+      font-size: 13px;
+    }
   }
 
   .ad-viewer {
