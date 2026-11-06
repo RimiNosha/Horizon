@@ -12,7 +12,6 @@ import { requiresProfileMatching } from '../chat/common';
 import { methods } from '../site/character_page/data_store';
 import { Character as ComplexCharacter } from '../site/character_page/interfaces';
 import { AdCache } from './ad-cache';
-import { DuplicateAdCache } from './ad-dedup-cache';
 import { AdGridCache, GridAdPosting } from './ad-grid-cache';
 import { ChannelConversationCache } from './channel-conversation-cache';
 import { CharacterProfiler } from './character-profiler';
@@ -60,13 +59,6 @@ export class CacheManager {
   profileCache: ProfileCache = new ProfileCache();
   channelConversationCache: ChannelConversationCache =
     new ChannelConversationCache();
-
-  /**
-   * Per-channel record of the ads already posted, used to hide repeats by the
-   * same character. Keyed by channel id, so a different advertiser serving the
-   * exact same text is never treated as a repeat.
-   */
-  duplicateAdCache: DuplicateAdCache = new DuplicateAdCache();
 
   /**
    * Per-channel record of the newest ad each character posted, used to fill the
@@ -122,12 +114,6 @@ export class CacheManager {
   markLastPostTime(): void {
     this.lastPost = new Date();
   }
-
-  /**
-   * Whether repeated ads are currently hidden in the conversation view. This
-   * mirrors the `hideDuplicateAds` store key, which the conversation view owns.
-   */
-  duplicateAdsHidden = true;
 
   /**
    * Records an ad for the posters grid, keeping only the newest posting per
@@ -219,60 +205,6 @@ export class CacheManager {
     if (Object.keys(serialized).length === 0) return;
 
     saveAdGrid(serialized);
-  }
-
-  markAdDuplicate(channelId: string, message: Conversation.Message): void {
-    if (message.type !== Message.Type.Ad || !message.sender) return;
-    if (message.sender.name === core.connection.character) return;
-
-    const isDuplicate = !this.duplicateAdCache.register({
-      channelId,
-      name: message.sender.name,
-      message: message.text
-    });
-
-    message.isDuplicate = isDuplicate;
-
-    if (!isDuplicate) return;
-
-    log.info('ad.duplicate.hidden', {
-      name: message.sender.name,
-      channel: channelId,
-      messageId: message.id,
-      text: message.text,
-      hidden: this.duplicateAdsHidden
-    });
-  }
-
-  /**
-   * Flags repeated ads in a backlog of messages, oldest first, so that only the
-   * earliest copy of each posting stays visible.
-   * @param channelId Channel the messages were posted in.
-   * @param messages Backlog messages in chronological order.
-   */
-  markAdDuplicates(
-    channelId: string,
-    messages: ReadonlyArray<Conversation.Message>
-  ): void {
-    for (const message of messages) this.markAdDuplicate(channelId, message);
-  }
-
-  /**
-   * Forgets the recorded postings of a channel, so that ads posted afterwards
-   * are measured against the new history instead of one that is no longer shown.
-   * @param channelId Channel to forget.
-   */
-  forgetAdDuplicates(channelId: string): void {
-    this.duplicateAdCache.deregister(channelId);
-  }
-
-  /**
-   * Forgets every recorded posting. Called when the connection drops, since the
-   * channel conversations are torn down and their backlogs get re-marked on the
-   * next connect.
-   */
-  resetAdDuplicates(): void {
-    this.duplicateAdCache.reset();
   }
 
   getLastPost(): Date {

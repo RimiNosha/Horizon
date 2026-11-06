@@ -117,8 +117,7 @@ export default Vue.extend({
         : '') +
       (this.classes !== undefined ? ` ${this.classes}` : '') +
       ` ${this.scoreClasses}` +
-      ` ${this.filterClasses}` +
-      ` ${this.duplicateClasses}`;
+      ` ${this.filterClasses}`;
     if (
       message.type !== Conversation.Message.Type.Event &&
       message.type !== Conversation.Message.Type.Bcast
@@ -392,13 +391,10 @@ export default Vue.extend({
       filterClasses: (this as any).getMessageFilterClasses(
         (this as any).message
       ),
-      duplicateClasses: (this as any).getMessageDuplicateClasses(
-        (this as any).message
-      ),
       scoreWatcher: ((this as any).message.type === Conversation.Message.Type.Ad
         ? (this as any).$watch(
             () =>
-              `${(this as any).message.score}|${(this as any).message.filterMatch}|${(this as any).message.isDuplicate}`,
+              `${(this as any).message.score}|${(this as any).message.filterMatch}`,
             () => (this as any).scoreUpdate()
           )
         : null) as (() => void) | null
@@ -423,16 +419,13 @@ export default Vue.extend({
     scoreUpdate(): void {
       const oldScoreClasses = this.scoreClasses;
       const oldFilterClasses = this.filterClasses;
-      const oldDuplicateClasses = this.duplicateClasses;
 
       this.scoreClasses = this.getMessageScoreClasses(this.message);
       this.filterClasses = this.getMessageFilterClasses(this.message);
-      this.duplicateClasses = this.getMessageDuplicateClasses(this.message);
 
       if (
         this.scoreClasses !== oldScoreClasses ||
-        this.filterClasses !== oldFilterClasses ||
-        this.duplicateClasses !== oldDuplicateClasses
+        this.filterClasses !== oldFilterClasses
       ) {
         this.$forceUpdate();
       }
@@ -456,19 +449,6 @@ export default Vue.extend({
       }
 
       return 'filter-match';
-    },
-
-    // Ads the same character already posted in this channel are marked so the
-    // conversation wrapper can hide them.
-    getMessageDuplicateClasses(message: Conversation.Message): string {
-      if (
-        message.type !== Conversation.Message.Type.Ad ||
-        !message.isDuplicate
-      ) {
-        return '';
-      }
-
-      return 'duplicate-ad';
     }
   }
 });
