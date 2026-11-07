@@ -381,7 +381,6 @@
             v-for="poster in adPosters"
             :key="poster.name"
             @mouseenter="showPosterHover(poster)"
-            @mouseleave="clearPosterHover(poster)"
             @click.stop="togglePin(poster)"
           >
             <img
@@ -628,7 +627,6 @@
   import Logs from './Logs.vue';
   import ManageChannel from './ManageChannel.vue';
   import MessageView from './message_view';
-  import ReportDialog from './ReportDialog.vue';
   import { isCommand } from './slash_commands';
   import UserView from './UserView.vue';
   import CharacterChannelList from './character/CharacterChannelList.vue';
@@ -751,6 +749,7 @@
             this.conversation.channel.mode === 'ads')
         );
       },
+
       // ^ One tile per character that posted an ad in this channel, oldest ad
       // first so newer posters append to the end; smart-filtered posters are
       // hidden when hideChannelMembers is on. The tile carries the matcher score
@@ -792,7 +791,6 @@
             };
           });
       },
-      // ^ The pinned ad wins over the hovered one, so the bottom card stays put.
       activePoster(): { name: string; text: string; time: Date } | undefined {
         return this.pinnedPoster ?? this.hoveredPoster;
       },
