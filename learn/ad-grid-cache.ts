@@ -38,7 +38,7 @@ export class AdGridRecord {
    * @constant
    * How long a posting stays in the grid before it is cleaned up.
    */
-  static readonly MAX_AGE_MS = 6 * 60 * 60 * 1000;
+  static readonly MAX_AGE_MS = 12 * 60 * 60 * 1000;
 
   private readonly posters = new Map<string, GridPoster>();
 
@@ -56,7 +56,7 @@ export class AdGridRecord {
     this.posters.set(key, {
       name: ad.name,
       text: ad.message,
-      time: ad.time
+      time: previous?.time || ad.time // Don't bring posters back to the bottom if we've already seen them
     });
   }
 
