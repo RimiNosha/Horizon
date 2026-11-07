@@ -388,9 +388,15 @@
               :src="avatarFor(poster.name)"
               loading="lazy"
             />
-            <span class="ads-grid-name" :class="poster.colorClass">{{
-              poster.name
-            }}</span>
+            <!-- ^ The tile name is a real UserView, so gender/offline/custom
+                 colors, badges, markers and the match chip match the chat. -->
+            <user
+              class="ads-grid-name"
+              :character="poster.character"
+              :channel="conversation.channel"
+              :match="true"
+              :isMarkerShown="shouldShowMarker"
+            ></user>
             <span
               class="ads-grid-score"
               :class="poster.scoreClass ? `score-${poster.scoreClass}` : ''"
@@ -611,7 +617,6 @@
   import ConversationSettings from './ConversationSettings.vue';
   import { Score } from '../learn/matcher';
   import { kinkMatchWeights, Scoring } from '../learn/matcher-types';
-  import { CharacterColor } from '../fchat/characters';
   import { isFilteredByChatGender } from '../learn/filter/smart-filter';
   import { hasActiveSmartFilters } from '../learn/filter/types';
   import ConversationAdSettings from './ads/ConversationAdSettings.vue';
@@ -753,14 +758,14 @@
       // ^ One tile per character that posted an ad in this channel, oldest ad
       // first so newer posters append to the end; smart-filtered posters are
       // hidden when hideChannelMembers is on. The tile carries the matcher score
-      // and gender/offline color so the grid reads like chat.
+      // and the character so its UserView can resolve colors and badges.
       adPosters(): ReadonlyArray<{
         name: string;
         text: string;
         time: Date;
+        character: Character;
         scoreClass: string;
         scoreLabel: string;
-        colorClass: string;
       }> {
         if (!this.isChannel(this.conversation)) return [];
 
@@ -785,9 +790,9 @@
               : '';
             return {
               ...poster,
+              character: this.posterCharacter(poster.name),
               scoreClass,
-              scoreLabel: scoreClass ? getMatchScoreLabel(scoreClass) : '',
-              colorClass: this.getPosterColorClass(poster.name)
+              scoreLabel: scoreClass ? getMatchScoreLabel(scoreClass) : ''
             };
           });
       },
@@ -1278,43 +1283,10 @@
         );
       },
 
-      // ^ Mirrors UserView.getStatusClasses' name-color logic, including the
-      // disk override resolution so custom colors apply even though the grid
-      // replaces the UserView that would normally trigger it. Reading the
-      // reactive overrides here re-runs adPosters once a color resolves.
-      getPosterColorClass(name: string): string {
-        const character = core.characters.get(name);
-        if (!character) return '';
-
-        const useOfflineColor =
-          core.state.settings.horizonChangeOfflineColor &&
-          character.status === 'offline';
-
-        if (
-          core.cache.hasCacheStarted &&
-          core.state.settings.horizonShowCustomCharacterColors &&
-          character.overrides.characterColor === undefined
-        ) {
-          // ^ Don't check again once we've looked; resolution lands via overrides
-          core.characters.setOverride(name, 'characterColor', null);
-          void core.cache.profileCache.applyOverridesFromStore(name);
-        }
-
-        if (
-          character.overrides.characterColor !== undefined &&
-          !useOfflineColor &&
-          character.overrides.characterColor !== CharacterColor.none
-        ) {
-          return `${CharacterColor[character.overrides.characterColor]}NameText`;
-        }
-
-        const baseGender = character.overrides.gender || character.gender;
-        const gender =
-          baseGender !== undefined && !useOfflineColor
-            ? baseGender.toLowerCase()
-            : 'none';
-
-        return `gender-${gender}`;
+      // ^ The tile's UserView resolves colors, badges and the match chip itself;
+      // it only needs the character object, which the state creates on demand.
+      posterCharacter(name: string): Character {
+        return core.characters.get(name);
       },
 
       // ^ Reads the cached match for a poster, mirroring UserView.getStatusClasses.
@@ -1740,10 +1712,9 @@
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      // ^ Mirrors .user-view exactly: a bare var() that drops the declaration
-      // when --gender-color is unset, so custom-color classes (.redNameText etc.)
-      // apply instead of being overridden by a valid fallback value.
-      color: var(--gender-color);
+      // ^ The tile name is a UserView, so .user-view already supplies the
+      // gender/custom color; only the tile's layout and truncation live here.
+      display: block;
     }
 
     .ads-grid-score {
