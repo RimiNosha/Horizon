@@ -394,15 +394,9 @@
               class="ads-grid-name"
               :character="poster.character"
               :channel="conversation.channel"
-              :match="true"
+              :match="false"
               :isMarkerShown="shouldShowMarker"
             ></user>
-            <span
-              class="ads-grid-score"
-              :class="poster.scoreClass ? `score-${poster.scoreClass}` : ''"
-              v-if="poster.scoreLabel"
-              >{{ poster.scoreLabel }}</span
-            >
           </div>
         </div>
       </template>
