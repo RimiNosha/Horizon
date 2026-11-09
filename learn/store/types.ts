@@ -14,6 +14,7 @@ import {
   Orientation,
   Species
 } from '../matcher-types';
+import { RequestPriority } from './worker/types';
 
 // This design should be refactored; it's bad
 export interface ProfileRecord {
@@ -46,7 +47,14 @@ export interface ProfileRecord {
 // export type Database = any;
 
 export interface PermanentIndexedStore {
-  getProfile(name: string): Promise<ProfileRecord | undefined>;
+  /**
+   * @param priority Pass `'low'` for background bulk reads so a busy worker
+   * queue isn't competing with interactive requests
+   */
+  getProfile(
+    name: string,
+    priority?: RequestPriority
+  ): Promise<ProfileRecord | undefined>;
   storeProfile(c: ComplexCharacter): Promise<void>;
 
   updateProfileMeta(

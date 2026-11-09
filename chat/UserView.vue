@@ -244,11 +244,14 @@
         character.overrides.characterColor === undefined
       ) {
         //Don't bother checking again if we don't get a result.
+        // ^ applyOverridesFromStore is low priority by default; a channel of
+        // members would otherwise flood the store worker with disk reads
         core.characters.setOverride(character.name, 'characterColor', null);
         void core.cache.profileCache.applyOverridesFromStore(character.name);
       }
       if (cache === null && (showMatch || showFilterIcon)) {
-        void core.cache.addProfile(character.name, channel?.id);
+        // ^ Bulk per-row lookups; defer the disk cache check (see WorkerClient)
+        void core.cache.addProfile(character.name, channel?.id, 'low');
       }
 
       if (core.state.settings.risingAdScore && showMatch && cache) {

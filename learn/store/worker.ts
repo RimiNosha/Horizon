@@ -7,6 +7,7 @@ import { PermanentIndexedStore, ProfileRecord } from './types';
 import { CharacterImage, SimpleCharacter } from '../../interfaces';
 
 import { WorkerClient } from './worker/client';
+import { RequestPriority } from './worker/types';
 import log from 'electron-log';
 
 export class WorkerStore implements PermanentIndexedStore {
@@ -30,10 +31,14 @@ export class WorkerStore implements PermanentIndexedStore {
     return store;
   }
 
-  async getProfile(name: string): Promise<ProfileRecord | undefined> {
+  async getProfile(
+    name: string,
+    priority: RequestPriority = 'normal'
+  ): Promise<ProfileRecord | undefined> {
     const record: ProfileRecord | undefined = await this.workerClient.request(
       'get',
-      { name }
+      { name },
+      priority
     );
 
     // fix custom kinks to prevent hangs

@@ -16,6 +16,7 @@ import { AdGridCache, GridAdPosting } from './ad-grid-cache';
 import { ChannelConversationCache } from './channel-conversation-cache';
 import { CharacterProfiler } from './character-profiler';
 import { CharacterCacheRecord, ProfileCache } from './profile-cache';
+import { RequestPriority } from './store/worker/types';
 import {
   ConversationDraftCache,
   ConversationDraftRecord
@@ -218,13 +219,16 @@ export class CacheManager {
    * @param name Character name
    * @param skipCacheCheck The cache can be skipped to hard-reload character data
    * @param channelId Provide a channel id to allow dropping this character from the queue if we un-focus the channel. (Useful to mitigate background noise from characters your no longer care about)
+   * @param priority `'low'` defers the disk cache check until the store worker's
+   * main queue is empty; use it when many names are checked at once
    *
    * Comment imported from Frolic; may be inaccurate if significant changes occured.
    */
   async queueForFetching(
     name: string,
     skipCacheCheck: boolean = false,
-    channelId?: string
+    channelId?: string,
+    priority: RequestPriority = 'normal'
   ): Promise<void> {
     if (!requiresProfileMatching(core.state.settings)) {
       return;
@@ -238,7 +242,7 @@ export class CacheManager {
     });
 
     if (!skipCacheCheck) {
-      const c = await this.profileCache.get(name);
+      const c = await this.profileCache.get(name, false, undefined, priority);
 
       if (c) {
         this.updateAdScoringForProfile(
@@ -363,20 +367,23 @@ export class CacheManager {
    *
    * But under what scenarios do we actually need to process without fetching?
    * @param character Character name to fetch, or a character object to finish
+   * @param priority `'low'` defers the disk cache check; pass it from bulk render
+   * paths (ad grid tiles, member rows) so they can't flood the store worker
    * Comment imported from Frolic; may be inaccurate if significant changes occured.
 
    * trimmed significantly with the userlist viertualization changes. fromDiskOnly
    * caused every profile to reregister no matter what, introducing extra work.
-   * applyOverridesFromStore does the same job without reregistering. 
+   * applyOverridesFromStore does the same job without reregistering.
    */
   async addProfile(
     character: string | ComplexCharacter,
-    channelId?: string
+    channelId?: string,
+    priority: RequestPriority = 'normal'
   ): Promise<void> {
     if (typeof character === 'string') {
       // console.log('Learn discover', character);
 
-      await this.queueForFetching(character, false, channelId);
+      await this.queueForFetching(character, false, channelId, priority);
       return;
     }
 
@@ -730,6 +737,8 @@ export class CacheManager {
    * @param conv Conversation message is posted in
    * @param msg Message to be scored
    * @param populateAll (Default: true) Spread score to all conversations?
+   * @param priority `'low'` defers the disk read until the store worker's main
+   * queue is empty; use it for sweeps that touch many characters
    * @returns CharacterCache if relevant
    *
    * Comment imported from Frolic; may be inaccurate if significant changes occured.
@@ -739,7 +748,8 @@ export class CacheManager {
     char: Character.Character,
     conv: ChannelConversation,
     msg?: Message,
-    populateAll: boolean = true
+    populateAll: boolean = true,
+    priority: RequestPriority = 'normal'
   ): Promise<CharacterCacheRecord | undefined> {
     if (!core.characters.ownProfile) {
       return undefined;
@@ -752,7 +762,8 @@ export class CacheManager {
       (await core.cache.profileCache.get(
         char.name,
         skipStore,
-        conv.channel.name
+        conv.channel.name,
+        priority
       )) || undefined;
 
     if (p && msg) {
@@ -824,8 +835,18 @@ export class CacheManager {
         if (this.profileCache.getSync(name)) continue;
 
         // loads profile from disk store, then recalculates filter status
-        const p = await this.resolveProfileScore(false, m.sender, conv, m);
-        if (!p) await this.queueForFetching(name, false, conv.channel.id);
+        // ^ Background sweep over every conversation; keep it out of the worker's
+        // main queue so it can't stall interactive requests
+        const p = await this.resolveProfileScore(
+          false,
+          m.sender,
+          conv,
+          m,
+          true,
+          'low'
+        );
+        if (!p)
+          await this.queueForFetching(name, false, conv.channel.id, 'low');
       }
     }
   }

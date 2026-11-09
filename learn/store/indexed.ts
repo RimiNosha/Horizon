@@ -9,6 +9,7 @@ import {
 import { CharacterAnalysis } from '../matcher';
 import { PermanentIndexedStore, ProfileRecord } from './types';
 import { CharacterImage, SimpleCharacter } from '../../interfaces';
+import { RequestPriority } from './worker/types';
 
 async function promisifyRequest<T>(req: IDBRequest): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -69,7 +70,12 @@ export class IndexedStore implements PermanentIndexedStore {
     return name.toLowerCase();
   }
 
-  async getProfile(name: string): Promise<ProfileRecord | undefined> {
+  // ^ Priority is a client-side concern (see WorkerClient); the worker runs
+  // whatever it receives, so it's accepted for interface compatibility only
+  async getProfile(
+    name: string,
+    _priority?: RequestPriority
+  ): Promise<ProfileRecord | undefined> {
     const tx = this.db.transaction(IndexedStore.STORE_NAME, 'readonly');
     const store = tx.objectStore(IndexedStore.STORE_NAME);
     const getRequest = store.get(this.toProfileId(name));

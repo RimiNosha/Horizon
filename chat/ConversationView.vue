@@ -1296,9 +1296,11 @@
           : undefined;
         const cache = core.cache.profileCache.getSync(name);
         if (cache === null && !this.requestedPosters.has(name)) {
-          // ^ Request a poster's profile once; re-renders must not re-queue it
+          // ^ Request a poster's profile once; re-renders must not re-queue it.
+          // Low priority: opening the grid asks for every poster at once, and the
+          // disk cache checks must not compete with interactive store requests.
           this.requestedPosters.add(name);
-          void core.cache.addProfile(name, channel?.id);
+          void core.cache.addProfile(name, channel?.id, 'low');
         }
         if (!cache) return '';
 

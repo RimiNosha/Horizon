@@ -20,6 +20,7 @@ import {
 import { AsyncCache } from './async-cache';
 import { Matcher, MatchReport } from './matcher';
 import { PermanentIndexedStore } from './store/types';
+import { RequestPriority } from './store/worker/types';
 import { CharacterImage, SimpleCharacter } from '../interfaces';
 import { Scoring } from './matcher-types';
 import { matchesSmartFilters } from './filter/smart-filter';
@@ -221,6 +222,8 @@ export class ProfileCache extends AsyncCache<CharacterCacheRecord> {
    * @param name Character to retrieve
    * @param skipStore Return negative if the character isn't in the cache
    * @param _fromChannel Unused
+   * @param priority Pass `'low'` when the lookup is background bulk work, so the
+   * disk read waits for the worker's main queue instead of competing with it
    * @returns Preferably a character; null if not in cache and `skipStore`; null if profile is not in the store
    *
    * Comment imported from Frolic; may be inaccurate if significant changes occured.
@@ -228,7 +231,8 @@ export class ProfileCache extends AsyncCache<CharacterCacheRecord> {
   async get(
     name: string,
     skipStore: boolean = false,
-    _fromChannel?: string
+    _fromChannel?: string,
+    priority: RequestPriority = 'normal'
   ): Promise<CharacterCacheRecord | null> {
     const key = AsyncCache.nameKey(name);
 
@@ -242,7 +246,7 @@ export class ProfileCache extends AsyncCache<CharacterCacheRecord> {
       return null;
     }
 
-    const pd = await this.store.getProfile(name);
+    const pd = await this.store.getProfile(name, priority);
 
     if (!pd) {
       return null;
@@ -275,11 +279,16 @@ export class ProfileCache extends AsyncCache<CharacterCacheRecord> {
    *
    * Does nothing if the profile isn't on disk
    * @param name Character to apply overrides for
+   * @param priority Defaults to `'low'`: this is called once per rendered name, so
+   * the disk reads should never compete with interactive store requests
    */
-  async applyOverridesFromStore(name: string): Promise<void> {
+  async applyOverridesFromStore(
+    name: string,
+    priority: RequestPriority = 'low'
+  ): Promise<void> {
     const profile =
       this.getSync(name)?.character ??
-      (await this.store?.getProfile(name))?.profileData;
+      (await this.store?.getProfile(name, priority))?.profileData;
 
     if (profile) {
       this.updateOverrides(profile);
@@ -294,16 +303,21 @@ export class ProfileCache extends AsyncCache<CharacterCacheRecord> {
    * directly instead of via getSync so a bulk scan doesn't reorder the LRU
    *
    * @param name Character to test
+   * @param priority Defaults to `'low'`: callers scan whole rosters, so the disk
+   * reads should wait for the worker's main queue
    * @returns whether they're filtered, or null if there's no profile to judge
    */
-  async isFilteredFromStore(name: string): Promise<boolean | null> {
+  async isFilteredFromStore(
+    name: string,
+    priority: RequestPriority = 'low'
+  ): Promise<boolean | null> {
     const cached = this.cache[AsyncCache.nameKey(name)];
 
     if (cached) {
       return cached.match.isFiltered;
     }
 
-    const profile = (await this.store?.getProfile(name))?.profileData;
+    const profile = (await this.store?.getProfile(name, priority))?.profileData;
 
     if (!profile) {
       return null;

@@ -1,13 +1,26 @@
 import _ from 'lodash';
 import log from 'electron-log'; //tslint:disable-line:match-default-export-name
 
-import { IndexedRequest, IndexedResponse, ProfileStoreCommand } from './types';
+import {
+  IndexedRequest,
+  IndexedResponse,
+  ProfileStoreCommand,
+  RequestPriority
+} from './types';
 
 export interface WaiterDef {
   id: string;
   resolve(result?: any): void;
   reject(result?: any): void;
   initiated: number;
+  request: IndexedRequest;
+}
+
+/** A low-priority request that hasn't reached the worker yet. */
+interface DeferredRequest {
+  id: string;
+  resolve(result?: any): void;
+  reject(result?: any): void;
   request: IndexedRequest;
 }
 
@@ -20,6 +33,9 @@ export class WorkerClient {
   private idCounter = 0;
 
   private waiters: WaiterDef[] = [];
+
+  /** Background requests parked until the main queue drains. */
+  private deferred: DeferredRequest[] = [];
 
   constructor(jsFile: string) {
     this.worker = new Worker(jsFile);
@@ -84,15 +100,43 @@ export class WorkerClient {
     };
   }
 
-  private clearWaiter(id: string): void {
+  private clearWaiter(id: string, flush = true): void {
     this.waiters = _.filter(this.waiters, w => w.id !== id);
 
     // log.silly('store.worker.waiter.clear', this.waiters.length);
+
+    // ^ The worker is free again; let parked background work advance
+    if (flush) {
+      this.flushDeferred();
+    }
+  }
+
+  /**
+   * Releases low-priority requests only while nothing else is in flight, and one
+   * at a time. Rendering a busy channel can fire hundreds of profile lookups at
+   * once (ad grid tiles, member rows); posting all of them immediately floods the
+   * worker with concurrent IndexedDB transactions and stalls interactive requests.
+   */
+  private flushDeferred(): void {
+    while (this.waiters.length === 0 && this.deferred.length > 0) {
+      const next = this.deferred.shift()!;
+
+      try {
+        this.when(next.id, next.resolve, next.reject, next.request);
+
+        this.worker.postMessage(next.request);
+      } catch (err) {
+        next.reject(err);
+        // Don't flush from here; the loop below keeps draining
+        this.clearWaiter(next.id, false);
+      }
+    }
   }
 
   async request(
     cmd: ProfileStoreCommand,
-    params: Record<string, any> = {}
+    params: Record<string, any> = {},
+    priority: RequestPriority = 'normal'
   ): Promise<any> {
     const id = this.generateId();
 
@@ -103,6 +147,14 @@ export class WorkerClient {
     };
 
     return new Promise((resolve, reject) => {
+      if (priority === 'low') {
+        // ^ Wait for the main queue to complete before touching the worker
+        this.deferred.push({ id, resolve, reject, request });
+
+        this.flushDeferred();
+        return;
+      }
+
       try {
         this.when(id, resolve, reject, request);
 

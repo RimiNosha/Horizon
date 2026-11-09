@@ -7,6 +7,13 @@ export type ProfileStoreCommand =
   | 'get'
   | 'init';
 
+/**
+ * `'low'` requests are parked on the client until the worker's main queue is
+ * drained; use it for bulk background reads that must not compete with
+ * interactive requests. Never sent to the worker itself.
+ */
+export type RequestPriority = 'normal' | 'low';
+
 export interface IndexedRequest {
   cmd: ProfileStoreCommand;
   id: string;
