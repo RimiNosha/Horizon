@@ -298,6 +298,12 @@ export class CacheManager {
       const c = await methods.characterData(name, -1, true);
       const r = await this.profileCache.register(c);
 
+      // ^ The only path that hits the website for a profile; log it so cache
+      // growth and queue churn can be traced from the logs alone
+      log.info('profile.cache.fetch', {
+        name: c.character.name
+      });
+
       this.updateAdScoringForProfile(c, r.match.matchScore, r.match.isFiltered);
 
       return c;
