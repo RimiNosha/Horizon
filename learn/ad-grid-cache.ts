@@ -89,6 +89,27 @@ export class AdGridRecord {
   }
 
   /**
+   * Re-applies only the filter half of a poster's verdict, keeping its score.
+   * Hidden posters are dropped; unhidden ones keep the tile and its score.
+   * @param name Character the verdict belongs to.
+   * @param filtered Whether the smart filters hide them under the new settings.
+   * @internal
+   */
+  setFiltered(name: string, filtered: boolean): void {
+    const key = Cache.nameKey(name);
+    const poster = this.posters.get(key);
+
+    if (!poster) return;
+
+    if (filtered) {
+      this.posters.delete(key);
+      return;
+    }
+
+    if (poster.profile) poster.profile.isFiltered = false;
+  }
+
+  /**
    * Returns the posters still within {@link AdGridRecord.MAX_AGE_MS}, dropping
    * the ones that have aged out as we read them.
    * @internal
@@ -141,8 +162,8 @@ export class AdGridCache extends Cache<AdGridRecord> {
   }
 
   /**
-   * Returns the fresh posters stored for a channel, oldest first. Posters
-   * hidden by the smart filters are not included.
+   * Returns the fresh posters stored for a channel, oldest first. Visibility is
+   * decided by the caller from the live settings.
    * @param channelId Channel to read.
    */
   getPosters(channelId: string): GridPoster[] {
@@ -152,12 +173,22 @@ export class AdGridCache extends Cache<AdGridRecord> {
   }
 
   /**
-   * Walks every channel's fresh posters, with duplicates repeated per channel.
-   * @param cb Called for each poster.
+   * Calls {@link cb} once per distinct poster name across every channel, so a
+   * character posted in several channels is only visited once.
+   * @param cb Called with each poster.
    */
   forEachPoster(cb: (poster: GridPoster) => void): void {
+    const seen = new Set<string>();
+
     for (const channelId in this.cache) {
-      for (const poster of this.cache[channelId].getFresh()) cb(poster);
+      for (const poster of this.cache[channelId].getFresh()) {
+        const key = Cache.nameKey(poster.name);
+
+        if (seen.has(key)) continue;
+
+        seen.add(key);
+        cb(poster);
+      }
     }
   }
 
@@ -174,13 +205,16 @@ export class AdGridCache extends Cache<AdGridRecord> {
   }
 
   /**
-   * Forgets a poster's stored verdict in every channel without removing the
-   * poster. Used when a filter change makes the verdict stale and the profile
-   * cache cannot recompute it because the profile is no longer in memory.
-   * @param name Character whose verdict is stale.
+   * Re-applies the filter half of a character's verdict in every channel,
+   * forgetting them where the smart filters now hide them and keeping their
+   * score where they don't. This is how a filter change reaches posters whose
+   * profile has already left the in-memory profile cache.
+   * @param name Character the verdict belongs to.
+   * @param filtered Whether the new settings hide them.
    */
-  clearProfile(name: string): void {
-    for (const channelId in this.cache) this.cache[channelId].dropProfile(name);
+  setFiltered(name: string, filtered: boolean): void {
+    for (const channelId in this.cache)
+      this.cache[channelId].setFiltered(name, filtered);
   }
 
   /**

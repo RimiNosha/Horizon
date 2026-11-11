@@ -15,6 +15,7 @@ import { AdCache } from './ad-cache';
 import { AdGridCache, GridAdPosting } from './ad-grid-cache';
 import { ChannelConversationCache } from './channel-conversation-cache';
 import { CharacterProfiler } from './character-profiler';
+import { isFilteredByChatGender } from './filter/smart-filter';
 import {
   CharacterCacheRecord,
   CharacterMatchSummary,
@@ -121,13 +122,36 @@ export class CacheManager {
   }
 
   /**
+   * Whether the smart filters hide a character using only what is already in
+   * memory: their stored verdict if the profile cache still holds it, otherwise
+   * the chat-gender filters. Decisive in both directions when it answers.
+   * @param name Character to judge.
+   */
+  private isGridPosterFiltered(name: string): boolean | undefined {
+    const cached = this.profileCache.getSync(name);
+
+    if (cached) return cached.match.isFiltered;
+
+    // ^ isFiltered is an OR, so a gender match is decisive without a profile
+    const character = core.characters.get(name);
+    const filters = core.state.settings.risingFilter;
+
+    if (character && isFilteredByChatGender(character, filters)) return true;
+
+    return undefined; // ^ Unknown; a disk read would be needed
+  }
+
+  /**
    * Records an ad for the posters grid, keeping only the newest posting per
-   * character. Messages that are not ads are left untouched.
+   * character. Messages that are not ads are left untouched, and posters the
+   * smart filters hide are not stored at all.
    * @param channelId Channel the ad was posted in.
    * @param message The ad message.
    */
   recordAdForGrid(channelId: string, message: Conversation.Message): void {
     if (message.type !== Message.Type.Ad || !message.sender) return;
+
+    if (this.isGridPosterFiltered(message.sender.name) === true) return;
 
     const posting: GridAdPosting = {
       channelId,
@@ -171,12 +195,16 @@ export class CacheManager {
   }
 
   /**
-   * Loads the persisted ad-poster grid from disk into the cache. Safe to call
-   * before a connection is established; the shared file is not character-scoped.
+   * Loads the persisted ad-poster grid from disk into the cache, then prunes the
+   * posters the current smart filters hide. The grid file is shared across
+   * characters and settings, so a persisted poster may no longer be allowed.
    * @internal
    */
   loadAdGrid(): void {
     this.adGridCache.load(getAdGrid());
+
+    // ^ Background sweep; the grid is opened later, so it can settle lazily
+    void this.refreshAdGridFilters();
   }
 
   /**
@@ -832,6 +860,64 @@ export class CacheManager {
         });
       }
     );
+  }
+
+  /**
+   * Re-applies the smart filters to the ad-poster grid after a filter change.
+   *
+   * The grid keeps its own copy of each poster's filter verdict, so a poster
+   * whose profile has already left the in-memory cache would otherwise keep the
+   * verdict from the settings that were active when it was scored. Posters still
+   * in the cache take the freshly recomputed verdict; the rest are judged by the
+   * chat-gender filters, then by the disk store, and an unhidden poster whose
+   * verdict could not be judged is requeued so its score arrives through
+   * {@link updateAdScoringForProfile | `updateAdScoringForProfile`}.
+   */
+  async refreshAdGridFilters(): Promise<void> {
+    const filters = core.state.settings.risingFilter;
+    const ownName = core.characters.ownCharacter.name;
+
+    const unresolved: string[] = [];
+
+    this.adGridCache.forEachPoster(poster => {
+      if (poster.name === ownName) return;
+
+      const cached = this.profileCache.getSync(poster.name);
+
+      // ^ rebuildFilters has already recomputed these verdicts in place
+      if (cached) {
+        this.adGridCache.updateProfile(poster.name, cached.match);
+        return;
+      }
+
+      // ^ isFiltered is an OR, so a gender match is decisive and needs no read
+      const character = core.characters.get(poster.name);
+
+      if (character && isFilteredByChatGender(character, filters)) {
+        this.adGridCache.setFiltered(poster.name, true);
+        return;
+      }
+
+      unresolved.push(poster.name);
+    });
+
+    // ^ Slow path: the disk store decides the rest, at low priority so a full
+    // grid cannot stall interactive store requests
+    for (const name of unresolved) {
+      const filtered = await this.profileCache.isFilteredFromStore(name, 'low');
+
+      // ^ Nothing on disk yet: queue the fetch so the profile can be judged,
+      // otherwise the poster would stay in the grid indefinitely
+      if (filtered === null) {
+        await this.queueForFetching(name, false, undefined, 'low');
+        continue;
+      }
+
+      this.adGridCache.setFiltered(name, filtered);
+
+      // ^ Unhidden but unscored: let the fetch fill the tile back in
+      if (!filtered) await this.queueForFetching(name, false, undefined, 'low');
+    }
   }
 
   // refreshes the filtered and matching status for any profiles that were no longer in memory

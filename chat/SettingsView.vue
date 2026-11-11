@@ -1526,14 +1526,16 @@
         );
 
         if (!_.isEqual(oldRisingFilter, newRisingFilter)) {
-          this.rebuildFilters();
+          // ^ Awaited so the configuration-update emit below, which refreshes
+          // the open ad grid, runs after every poster has been re-checked
+          await this.rebuildFilters();
         }
 
         if (this.notifications) await core.notifications.requestPermission();
 
         EventBus.$emit('configuration-update', core.state.settings);
       },
-      rebuildFilters() {
+      async rebuildFilters(): Promise<void> {
         core.cache.profileCache.onEachInMemory(c => {
           const oldFiltered = c.match.isFiltered;
 
@@ -1548,11 +1550,21 @@
               c.match.matchScore,
               c.match.isFiltered
             );
+            // ^ The grid holds its own copy of the verdict, so it has to be
+            // told about the change while the profile is still in memory
+            core.cache.adGridCache.updateProfile(
+              c.character.character.name,
+              c.match
+            );
           }
         });
 
         // if a sender's filtered status is stale (not in memory), rematch them
         void core.cache.rematchStaleAdsInConversations();
+
+        // ^ The grid also holds posters no conversation contains anymore, so it
+        // needs its own sweep over its secondary store
+        await core.cache.refreshAdGridFilters();
       },
       getAsNumber(input: any): number | null {
         if (_.isNil(input) || input === '') {

@@ -1263,22 +1263,45 @@
         (<ManageChannel>this.$refs['manageDialog']).show();
       },
 
+      // ^ Queues a poster's profile once, so a poster without a verdict gets
+      // judged instead of staying in the grid forever. Low priority: opening
+      // the grid asks for every poster at once, and the disk cache checks must
+      // not compete with interactive store requests.
+      requestPosterProfile(poster: GridPoster): void {
+        if (this.requestedPosters.has(poster.name)) return;
+
+        this.requestedPosters.add(poster.name);
+
+        const channel = this.isChannel(this.conversation)
+          ? this.conversation.channel
+          : undefined;
+
+        void core.cache.addProfile(poster.name, channel?.id, 'low');
+      },
+
       // ^ Mirrors UserList.getFilteredMembers: hide posters the smart filters
-      // match. Uses the grid's own copy of the verdict when it has one, so a
-      // filter change hides posters without reaching into the profile cache;
-      // otherwise fall back to the chat-gender verdict.
+      // match, using the grid's own copy of the verdict so a filter change
+      // hides them without reaching into the profile cache. A poster with no
+      // verdict can only be judged by chat gender, so ask for its profile:
+      // without one it would never be hidden.
       isPosterFiltered(poster: GridPoster): boolean {
         const filters = core.state.settings.risingFilter;
         if (!filters.hideChannelMembers || !hasActiveSmartFilters(filters)) {
           return false;
         }
 
-        if (poster.profile?.isFiltered === true) return true;
+        if (poster.profile) return poster.profile.isFiltered;
 
         const character = core.characters.get(poster.name);
-        return (
-          character !== undefined && isFilteredByChatGender(character, filters)
-        );
+
+        if (
+          character !== undefined &&
+          isFilteredByChatGender(character, filters)
+        )
+          return true;
+
+        this.requestPosterProfile(poster);
+        return false;
       },
 
       // ^ The tile's UserView resolves colors, badges and the match chip itself;
@@ -1302,18 +1325,7 @@
           return Score.getClasses(poster.profile.matchScore);
         }
 
-        const channel = this.isChannel(this.conversation)
-          ? this.conversation.channel
-          : undefined;
-
-        // ^ Request the profile once; re-renders must not re-queue it. Low
-        // priority: opening the grid asks for every poster at once, and the
-        // disk cache checks must not compete with interactive store requests.
-        if (!this.requestedPosters.has(poster.name)) {
-          this.requestedPosters.add(poster.name);
-          void core.cache.addProfile(poster.name, channel?.id, 'low');
-        }
-
+        this.requestPosterProfile(poster);
         return '';
       },
 
