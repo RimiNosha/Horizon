@@ -15,7 +15,11 @@ import { AdCache } from './ad-cache';
 import { AdGridCache, GridAdPosting } from './ad-grid-cache';
 import { ChannelConversationCache } from './channel-conversation-cache';
 import { CharacterProfiler } from './character-profiler';
-import { CharacterCacheRecord, ProfileCache } from './profile-cache';
+import {
+  CharacterCacheRecord,
+  CharacterMatchSummary,
+  ProfileCache
+} from './profile-cache';
 import { RequestPriority } from './store/worker/types';
 import {
   ConversationDraftCache,
@@ -245,11 +249,7 @@ export class CacheManager {
       const c = await this.profileCache.get(name, false, undefined, priority);
 
       if (c) {
-        this.updateAdScoringForProfile(
-          c.character,
-          c.match.matchScore,
-          c.match.isFiltered
-        );
+        this.updateAdScoringForProfile(c.character, c.match);
         return;
       }
     }
@@ -304,7 +304,7 @@ export class CacheManager {
         name: c.character.name
       });
 
-      this.updateAdScoringForProfile(c, r.match.matchScore, r.match.isFiltered);
+      this.updateAdScoringForProfile(c, r.match);
 
       return c;
     } catch (err) {
@@ -315,25 +315,31 @@ export class CacheManager {
   }
 
   /**
-   * A wasteful function that will probably die when the cache is more orderly.
-   * @param c
-   * @param score
-   * @param isFiltered
+   * Spread a profile's matcher verdict everywhere it is shown: the event bus,
+   * the scored ad messages in every conversation, and the ad-poster grid.
    *
-   * Comment imported from Frolic; may be inaccurate if significant changes occured.
+   * The grid copy is the secondary store the posters render from, so the grid
+   * never needs the full profile to stay resident in the profile cache.
+   * @param c The matched profile
+   * @param match Its score and filter state
    */
   updateAdScoringForProfile(
     c: ComplexCharacter,
-    score: number,
-    isFiltered: boolean
+    match: CharacterMatchSummary
   ): void {
     EventBus.$emit('character-score', {
       character: c,
-      score,
-      isFiltered
+      score: match.matchScore,
+      isFiltered: match.isFiltered
     });
 
-    this.populateAllConversationsWithScore(c.character.name, score, isFiltered);
+    this.populateAllConversationsWithScore(
+      c.character.name,
+      match.matchScore,
+      match.isFiltered
+    );
+    this.adGridCache.updateProfile(c.character.name, match);
+
     void this.respondToPendingRejections(c);
   }
 
@@ -793,6 +799,10 @@ export class CacheManager {
           p.match.isFiltered
         );
       }
+
+      // ^ Copy the verdict into the grid's own store so the posters stay scored
+      // after this profile is evicted from the in-memory profile cache
+      this.adGridCache.updateProfile(char.name, p.match);
     }
 
     return p;

@@ -611,6 +611,7 @@
   import ConversationSettings from './ConversationSettings.vue';
   import { Score } from '../learn/matcher';
   import { kinkMatchWeights, Scoring } from '../learn/matcher-types';
+  import { GridPoster } from '../learn/ad-grid-cache';
   import { isFilteredByChatGender } from '../learn/filter/smart-filter';
   import { hasActiveSmartFilters } from '../learn/filter/types';
   import ConversationAdSettings from './ads/ConversationAdSettings.vue';
@@ -750,9 +751,10 @@
       },
 
       // ^ One tile per character that posted an ad in this channel, oldest ad
-      // first so newer posters append to the end; smart-filtered posters are
-      // hidden when hideChannelMembers is on. The tile carries the matcher score
-      // and the character so its UserView can resolve colors and badges.
+      // first so newer posters append to the end. Posters the smart filters hide
+      // are dropped by the ad grid cache itself. The tile carries the matcher
+      // verdict kept in that cache plus the character, so rendering never reads
+      // the profile cache and never pulls a full profile back into memory.
       adPosters(): ReadonlyArray<{
         name: string;
         text: string;
@@ -775,15 +777,16 @@
         return posters
           .filter(
             poster =>
-              !core.isHidden(poster.name) &&
-              !this.isPosterFilteredByName(poster.name)
+              !core.isHidden(poster.name) && !this.isPosterFiltered(poster)
           )
           .map(poster => {
             const scoreClass = showScores
-              ? this.getPosterScoreClass(poster.name)
+              ? this.getPosterScoreClass(poster)
               : '';
             return {
-              ...poster,
+              name: poster.name,
+              text: poster.text,
+              time: poster.time,
               character: this.posterCharacter(poster.name),
               scoreClass,
               scoreLabel: scoreClass ? getMatchScoreLabel(scoreClass) : ''
@@ -1261,17 +1264,18 @@
       },
 
       // ^ Mirrors UserList.getFilteredMembers: hide posters the smart filters
-      // match, using the cached verdict or the chat-gender fallback.
-      isPosterFilteredByName(name: string): boolean {
+      // match. Uses the grid's own copy of the verdict when it has one, so a
+      // filter change hides posters without reaching into the profile cache;
+      // otherwise fall back to the chat-gender verdict.
+      isPosterFiltered(poster: GridPoster): boolean {
         const filters = core.state.settings.risingFilter;
         if (!filters.hideChannelMembers || !hasActiveSmartFilters(filters)) {
           return false;
         }
 
-        const cache = core.cache.profileCache.getSync(name);
-        if (cache?.match.isFiltered === true) return true;
+        if (poster.profile?.isFiltered === true) return true;
 
-        const character = core.characters.get(name);
+        const character = core.characters.get(poster.name);
         return (
           character !== undefined && isFilteredByChatGender(character, filters)
         );
@@ -1283,28 +1287,34 @@
         return core.characters.get(name);
       },
 
-      // ^ Reads the cached match for a poster, mirroring UserView.getStatusClasses.
-      getPosterScoreClass(name: string): string {
+      // ^ Scores a poster from the ad grid cache's own copy of the matcher
+      // verdict, mirroring UserView.getStatusClasses. Falls back to fetching the
+      // profile only when the verdict is missing, so a grid with more posters
+      // than the profile cache can hold in memory stays fully scored.
+      getPosterScoreClass(poster: GridPoster): string {
+        if (poster.profile) {
+          if (
+            poster.profile.searchScore >= kinkMatchWeights.perfectThreshold &&
+            poster.profile.matchScore === Scoring.MATCH
+          ) {
+            return 'perfect';
+          }
+          return Score.getClasses(poster.profile.matchScore);
+        }
+
         const channel = this.isChannel(this.conversation)
           ? this.conversation.channel
           : undefined;
-        const cache = core.cache.profileCache.getSync(name);
-        if (cache === null && !this.requestedPosters.has(name)) {
-          // ^ Request a poster's profile once; re-renders must not re-queue it.
-          // Low priority: opening the grid asks for every poster at once, and the
-          // disk cache checks must not compete with interactive store requests.
-          this.requestedPosters.add(name);
-          void core.cache.addProfile(name, channel?.id, 'low');
-        }
-        if (!cache) return '';
 
-        if (
-          cache.match.searchScore >= kinkMatchWeights.perfectThreshold &&
-          cache.match.matchScore === Scoring.MATCH
-        ) {
-          return 'perfect';
+        // ^ Request the profile once; re-renders must not re-queue it. Low
+        // priority: opening the grid asks for every poster at once, and the
+        // disk cache checks must not compete with interactive store requests.
+        if (!this.requestedPosters.has(poster.name)) {
+          this.requestedPosters.add(poster.name);
+          void core.cache.addProfile(poster.name, channel?.id, 'low');
         }
-        return Score.getClasses(cache.match.matchScore);
+
+        return '';
       },
 
       toggleAdGrid(): void {

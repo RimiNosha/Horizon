@@ -9,6 +9,7 @@
 
 import { emptyMap } from '../fchat/common';
 import { Cache } from './cache';
+import { CharacterMatchSummary } from './profile-cache';
 
 export interface GridAdPosting {
   channelId: string;
@@ -21,6 +22,12 @@ export interface GridPoster {
   name: string;
   text: string;
   time: Date;
+  /**
+   * The matcher verdict for this poster, kept here so the grid can render
+   * scores and filter state without pulling the full profile back into the
+   * in-memory {@link ProfileCache}. Absent until the profile resolves.
+   */
+  profile?: CharacterMatchSummary;
 }
 
 /**
@@ -56,8 +63,29 @@ export class AdGridRecord {
     this.posters.set(key, {
       name: ad.name,
       text: ad.message,
-      time: previous?.time || ad.time // Don't bring posters back to the bottom if we've already seen them
+      time: previous?.time || ad.time, // Don't bring posters back to the bottom if we've already seen them
+      profile: previous?.profile
     });
+  }
+
+  /**
+   * Attaches a matcher verdict to this channel's poster, dropping the poster
+   * entirely when the smart filters hide them.
+   * @param name Character the verdict belongs to.
+   * @param match Score and filter state from the profile cache.
+   * @internal
+   */
+  setProfile(name: string, match: CharacterMatchSummary): void {
+    const key = Cache.nameKey(name);
+
+    // ^ Hidden posters don't belong in the grid at all
+    if (match.isFiltered) {
+      this.posters.delete(key);
+      return;
+    }
+
+    const poster = this.posters.get(key);
+    if (poster) poster.profile = match;
   }
 
   /**
@@ -113,13 +141,46 @@ export class AdGridCache extends Cache<AdGridRecord> {
   }
 
   /**
-   * Returns the fresh posters stored for a channel, oldest first.
+   * Returns the fresh posters stored for a channel, oldest first. Posters
+   * hidden by the smart filters are not included.
    * @param channelId Channel to read.
    */
   getPosters(channelId: string): GridPoster[] {
     const record = this.cache[Cache.nameKey(channelId)];
 
     return record ? record.getFresh() : [];
+  }
+
+  /**
+   * Walks every channel's fresh posters, with duplicates repeated per channel.
+   * @param cb Called for each poster.
+   */
+  forEachPoster(cb: (poster: GridPoster) => void): void {
+    for (const channelId in this.cache) {
+      for (const poster of this.cache[channelId].getFresh()) cb(poster);
+    }
+  }
+
+  /**
+   * Distributes a matcher verdict to every channel's poster for a character,
+   * forgetting the poster wherever the smart filters hide them. This is the
+   * secondary store the ad grid renders from, so the grid does not need the
+   * full profile to stay resident in the {@link ProfileCache}.
+   * @param name Character the verdict belongs to.
+   * @param match Score and filter state from the profile cache.
+   */
+  updateProfile(name: string, match: CharacterMatchSummary): void {
+    for (const key in this.cache) this.cache[key].setProfile(name, match);
+  }
+
+  /**
+   * Forgets a poster's stored verdict in every channel without removing the
+   * poster. Used when a filter change makes the verdict stale and the profile
+   * cache cannot recompute it because the profile is no longer in memory.
+   * @param name Character whose verdict is stale.
+   */
+  clearProfile(name: string): void {
+    for (const channelId in this.cache) this.cache[channelId].dropProfile(name);
   }
 
   /**
